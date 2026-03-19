@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const apiController = require('../controllers/apiController');
-const prodController = require('../controllers/productionCenterController');
 const user = require('../controllers/users/userController');
+const prodController = require('../controllers/Production/productionCenterController');
+const distController = require('../controllers/Production/distributionCenterController');
+
+
 
 // This matches your Django urlpatterns exactly
 
@@ -17,7 +20,7 @@ router.post('/farmer-request/', apiController.farmerRequest);
 router.post('/approve-item/', apiController.approveItem);
 router.get('/roles/', apiController.getRoles);
 router.post('/farmer-aadhar/', apiController.farmerAadhar);
-
+// ======================================================================
 
 // --- Types Routes ---
 router.get('/production-center-types/', prodController.getProductionCenterTypes);
@@ -25,8 +28,7 @@ router.post('/production-center-types/', prodController.createProductionCenterTy
 router.put('/production-center-types/', prodController.updateProductionCenterType);
 router.delete('/production-center-types/', prodController.deleteProductionCenterType);
 
-// --- Center Routes ---
-// Note: We pass the upload middleware specifically to POST and PUT
+// ----Production Centers-------
 router.get('/production-centers/', prodController.getProductionCenters);
 router.post('/production-centers/', prodController.uploadMiddleware, prodController.createProductionCenter);
 router.put('/production-centers/', prodController.uploadMiddleware, prodController.updateProductionCenter);
@@ -56,5 +58,12 @@ router.delete("/farmer-aadhar", user.deleteFarmer);
 // REQUEST
 router.post("/farmer-request", user.createRequest);
 router.post("/approve-item", user.updateRequestItem);
+
+// ----Distribution Centers-------
+router.get('/distribution-centers/', distController.getDistributionCenters);
+router.post('/distribution-centers/', distController.createDistributionCenter);
+router.put('/distribution-centers/', distController.updateDistributionCenter);
+router.delete('/distribution-centers/', distController.deleteDistributionCenter);
+
 
 module.exports = router;
