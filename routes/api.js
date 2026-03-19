@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const apiController = require('../controllers/apiController');
 const prodController = require('../controllers/productionCenterController');
-
+const user = require('../controllers/users/userController');
 
 // This matches your Django urlpatterns exactly
 
@@ -31,5 +31,30 @@ router.get('/production-centers/', prodController.getProductionCenters);
 router.post('/production-centers/', prodController.uploadMiddleware, prodController.createProductionCenter);
 router.put('/production-centers/', prodController.uploadMiddleware, prodController.updateProductionCenter);
 router.delete('/production-centers/', prodController.deleteProductionCenter);
+
+
+
+
+
+// AUTH
+router.post("/register", user.register);
+router.post("/verify-otp", user.verifyOtp);
+router.post("/login", user.login);
+
+// ROLE
+router.get("/roles", user.getRoles);
+router.post("/roles", user.createRole);
+router.put("/roles", user.updateRole);
+router.delete("/roles", user.deleteRole);
+
+// FARMER
+router.get("/farmer-aadhar", user.getFarmer);
+router.post("/farmer-aadhar", user.createFarmer);
+router.put("/farmer-aadhar", user.updateFarmer);
+router.delete("/farmer-aadhar", user.deleteFarmer);
+
+// REQUEST
+router.post("/farmer-request", user.createRequest);
+router.post("/approve-item", user.updateRequestItem);
 
 module.exports = router;
