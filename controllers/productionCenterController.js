@@ -60,7 +60,7 @@ exports.getProductionCenterTypes = async (req, res) => {
 exports.createProductionCenterType = async (req, res) => {
     try {
         const { name } = req.body;
-        const [result] = await db.query('INSERT INTO ProductionCenterTypes (name) VALUES (?)', [name]);
+        const [result] = await db.query('INSERT INTO productioncenter_productioncentertypes (name) VALUES (?)', [name]);
         res.status(201).json({ id: result.insertId, name });
     } catch (err) {
         res.status(400).json({ error: err.message });
@@ -74,9 +74,9 @@ exports.updateProductionCenterType = async (req, res) => {
         if (!id) return res.status(400).json({ error: "id is required" });
 
         const { name } = req.body;
-        await db.query('UPDATE ProductionCenterTypes SET name = ? WHERE id = ?', [name, id]);
+        await db.query('UPDATE productioncenter_productioncentertypes SET name = ? WHERE id = ?', [name, id]);
         
-        const [rows] = await db.query('SELECT * FROM ProductionCenterTypes WHERE id = ?', [id]);
+        const [rows] = await db.query('SELECT * FROM productioncenter_productioncentertypes WHERE id = ?', [id]);
         res.json(rows[0]);
     } catch (err) {
         res.status(400).json({ error: err.message });
@@ -88,15 +88,13 @@ exports.deleteProductionCenterType = async (req, res) => {
     try {
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: "id is required" });
-        await db.query('DELETE FROM ProductionCenterTypes WHERE id = ?', [id]);
+        await db.query('DELETE FROM productioncenter_productioncentertypes WHERE id = ?', [id]);
         res.status(204).send();
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
 
-
-// --- PRODUCTION CENTER LOGIC ---
 
 // Helper function to structure data like Django Serializer
 const formatCenterData = (centers, certificates) => {
@@ -126,13 +124,13 @@ exports.getProductionCenters = async (req, res) => {
         if (id) {
             const [centers] = await db.query(`
                 SELECT pc.*, pct.name as type_name 
-                FROM ProductionCenter pc
-                JOIN ProductionCenterTypes pct ON pc.production_center_type_id = pct.id
+                FROM productioncenter_productioncenter pc
+                JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
                 WHERE pc.id = ?`, [id]);
 
             if (centers.length === 0) return res.status(404).json({ error: "Production Center not found" });
 
-            const [certs] = await db.query('SELECT id, certificate_file FROM ProductionCenterCertificate WHERE production_center_id = ?', [id]);
+            const [certs] = await db.query('SELECT id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id = ?', [id]);
             
             const formatted = formatCenterData(centers, certs);
             return res.json(formatted[0]);
@@ -141,8 +139,8 @@ exports.getProductionCenters = async (req, res) => {
         // List View
         let query = `
             SELECT pc.*, pct.name as type_name 
-            FROM ProductionCenter pc
-            JOIN ProductionCenterTypes pct ON pc.production_center_type_id = pct.id
+            FROM productioncenter_productioncenter pc
+            JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
             WHERE 1=1`;
         const params = [];
 
@@ -163,7 +161,7 @@ exports.getProductionCenters = async (req, res) => {
         const centerIds = centers.map(c => c.id);
         let certs = [];
         if (centerIds.length > 0) {
-            [certs] = await db.query(`SELECT id, production_center_id, certificate_file FROM ProductionCenterCertificate WHERE production_center_id IN (?)`, [centerIds]);
+            [certs] = await db.query(`SELECT id, production_center_id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id IN (?)`, [centerIds]);
         }
 
         const formatted = formatCenterData(centers, certs);
@@ -189,7 +187,7 @@ exports.createProductionCenter = async (req, res) => {
 
         // 1. Insert Production Center
         const [result] = await connection.query(
-            `INSERT INTO ProductionCenter 
+            `INSERT INTO productioncenter_productioncenter 
             (production_center_type_id, name_of_production_centre, complete_address, district, taluk, block, village, contact_person, mobile_number, latitude, longitude, nursery_capacity, certification_details, created_by) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
@@ -201,12 +199,12 @@ exports.createProductionCenter = async (req, res) => {
 
         // 2. Generate Code (Signal logic equivalent)
         const code = `PDC${centerId.toString().padStart(4, '0')}`;
-        await connection.query('UPDATE ProductionCenter SET production_center_code = ? WHERE id = ?', [code, centerId]);
+        await connection.query('UPDATE productioncenter_productioncenter SET production_center_code = ? WHERE id = ?', [code, centerId]);
 
         // 3. Upload Certificates
         if (files && files.length > 0) {
             const certValues = files.map(file => [centerId, file.path]);
-            await connection.query('INSERT INTO ProductionCenterCertificate (production_center_id, certificate_file) VALUES ?', [certValues]);
+            await connection.query('INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?', [certValues]);
         }
 
         await connection.commit();
@@ -237,7 +235,7 @@ exports.updateProductionCenter = async (req, res) => {
 
         // Update Main Table
         await connection.query(
-            `UPDATE ProductionCenter SET 
+            `UPDATE productioncenter_productioncenter SET 
             production_center_type_id = ?, name_of_production_centre = ?, complete_address = ?, 
             district = ?, taluk = ?, block = ?, village = ?, contact_person = ?, mobile_number = ?, 
             latitude = ?, longitude = ?, nursery_capacity = ?, certification_details = ?
@@ -252,7 +250,7 @@ exports.updateProductionCenter = async (req, res) => {
         // Add new certificates if uploaded
         if (files && files.length > 0) {
             const certValues = files.map(file => [id, file.path]);
-            await connection.query('INSERT INTO ProductionCenterCertificate (production_center_id, certificate_file) VALUES ?', [certValues]);
+            await connection.query('INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?', [certValues]);
         }
 
         await connection.commit();
@@ -276,7 +274,7 @@ exports.deleteProductionCenter = async (req, res) => {
         if (!id) return res.status(400).json({ error: "id is required" });
 
         // Assuming ON DELETE CASCADE in DB, else delete certificates manually
-        await db.query('DELETE FROM ProductionCenter WHERE id = ?', [id]);
+        await db.query('DELETE FROM productioncenter_productioncenter WHERE id = ?', [id]);
         res.status(204).send();
     } catch (err) {
         res.status(500).json({ error: err.message });
