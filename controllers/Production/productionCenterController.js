@@ -209,32 +209,70 @@ exports.createProductionCenter = async (req, res) => {
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
+
         const body = req.body;
         const files = req.files;
+        const userId = req.user?.id || 1; // ID of logged-in user
 
+        // 1️⃣ Insert Production Center
         const [result] = await connection.query(
-            `INSERT INTO productioncenter_productioncenter 
-            (production_center_type_id, name_of_production_centre, complete_address, district, taluk, block, village, contact_person, mobile_number, latitude, longitude, nursery_capacity, certification_details, created_by) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO productioncenter_productioncenter
+            (production_center_type_id, production_type, status, name_of_production_centre,
+             complete_address, district, taluk, block, village, contact_person, mobile_number,
+             latitude, longitude, nursery_capacity, certification_details, created_by)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                body.production_center_type, body.name_of_production_centre, body.complete_address, body.district, body.taluk, body.block, body.village, body.contact_person, body.mobile_number, body.latitude, body.longitude, body.nursery_capacity, body.certification_details, req.user?.id || 1
+                body.production_center_type,                  // FK to type table
+                body.production_type || 'government',        // default government
+                body.name_of_production_centre,
+                body.complete_address,
+                body.district,
+                body.taluk,
+                body.block,
+                body.village,
+                body.contact_person,
+                body.mobile_number,
+                body.latitude,
+                body.longitude,
+                body.nursery_capacity,
+                body.certification_details,
+                userId
             ]
         );
 
         const centerId = result.insertId;
-        const code = `PDC${centerId.toString().padStart(4, '0')}`;
-        await connection.query('UPDATE productioncenter_productioncenter SET production_center_code = ? WHERE id = ?', [code, centerId]);
 
+        //  Generate unique center code
+        const code = `PDC${centerId.toString().padStart(4, '0')}`;
+        await connection.query(
+            'UPDATE productioncenter_productioncenter SET production_center_code = ? WHERE id = ?',
+            [code, centerId]
+        );
+
+        //  Save uploaded certificates (PDF only, max 400KB enforced by multer)
         if (files && files.length > 0) {
             const certValues = files.map(file => [centerId, file.path]);
-            await connection.query('INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?', [certValues]);
+            await connection.query(
+                'INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?',
+                [certValues]
+            );
         }
 
+        //  Auto-generate certificate for private centers
+        if (body.production_type === 'private') {
+            // Add your PDF generation logic here
+            console.log('Private center: generate certificate PDF');
+        }
+
+        //  Commit transaction
         await connection.commit();
-        await clearProductionCenterCache(); // Clear Cache
-        
-        req.query.id = centerId;
-        return exports.getProductionCenters(req, res);
+
+        //  Return response with status = pending
+        res.status(201).json({
+            id: centerId,
+            production_center_code: code,
+            status: 'pending'
+        });
 
     } catch (err) {
         await connection.rollback();
