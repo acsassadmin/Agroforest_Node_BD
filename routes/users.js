@@ -15,5 +15,4 @@ router.get('/roles/', userController.getRoles);
 router.post('/farmer-aadhar/', userController.farmerAadhar);
 // ======================================================================
 
-
 module.exports = router;

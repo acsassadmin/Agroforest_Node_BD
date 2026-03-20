@@ -137,7 +137,6 @@ exports.login = async (req, res) => {
       { expiresIn: '15m' }
     );
 
-    // 4. Generate Refresh Token (Long lived: e.g., 7 days)
     const refreshToken = jwt.sign(
       { id: user.id },
       JWT_REFRESH_SECRET,
@@ -170,7 +169,9 @@ exports.refreshToken = async (req, res) => {
 
 exports.getRoles = async (req, res) => {
   try {
-    const [roles] = await db.query(`SELECT * FROM users_role`);
+    const [roles] = await db.query(
+      `SELECT * FROM users_role`
+    );
     res.json(roles);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -209,12 +210,8 @@ exports.deleteRole = async (req, res) => {
 };
 
 // ===================== FARMER AADHAR =====================
-// RENAMED to match route 'farmerAadhar'
 
 exports.farmerAadhar = async (req, res) => {
-  // Assuming this is a GET request based on route name, 
-  // but your route is POST. Adjust logic as needed.
-  // Here I am handling the GET logic from your previous 'getFarmer'
   try {
     const { aadhar_no } = req.query;
 
@@ -296,3 +293,4 @@ exports.approveItem = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
