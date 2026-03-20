@@ -12,8 +12,12 @@ app.get('/', (req, res) => {
   res.send('Hello, Express!');
 });
 
-const apiRoutes = require('./routes/api');
-app.use('/api', apiRoutes);
+const userRoutes = require('./routes/users');
+const centerRoutes = require('./routes/centers');
+
+app.use('/users', userRoutes);
+app.use('/center', centerRoutes);
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
