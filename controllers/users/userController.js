@@ -211,21 +211,117 @@ exports.deleteRole = async (req, res) => {
 
 // ===================== FARMER AADHAR =====================
 
-exports.farmerAadhar = async (req, res) => {
+exports.createFarmer = async (req, res) => {
   try {
-    const { aadhar_no } = req.query;
+    const { 
+      name, 
+      mobile_number, 
+      village, 
+      aadhar_no, 
+      land_panel_details, 
+      species_preferred, // Array [1, 2]
+      purpose, 
+      type 
+    } = req.body;
 
-    const [data] = await db.query(
-      `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
-      [aadhar_no]
+    // 1. Determine Prefix
+    let prefix = '';
+    if (type === 'farmer') {
+      prefix = 'FAR';
+    } else if (type === 'non-farmer') {
+      prefix = 'NFAR';
+    } else {
+      return res.status(400).json({ error: "Invalid type. Must be 'farmer' or 'non-farmer'." });
+    }
+
+    // 2. Find last ID
+    const [rows] = await db.query(
+      `SELECT farmer_id FROM users_farmeraathardetails 
+       WHERE farmer_id LIKE ? 
+       ORDER BY id DESC LIMIT 1`,
+      [`${prefix}%`]
     );
 
-    if (!data.length) return res.status(404).json({ error: "Not found" });
-    res.json(data[0]);
+    // 3. Calculate Next Number
+    let nextNum = 1;
+    if (rows.length > 0) {
+      const lastId = rows[0].farmer_id;
+      const numPart = lastId.replace(prefix, '');
+      const lastNum = parseInt(numPart, 10);
+      nextNum = lastNum + 1;
+    }
+
+    // 4. Format ID
+    const paddedNum = String(nextNum).padStart(3, '0');
+    const farmer_id = `${prefix}${paddedNum}`;
+
+    // 5. Insert Query (Added created_at and updated_at)
+    const insertQuery = `
+      INSERT INTO users_farmeraathardetails 
+      (farmer_id, name, mobile_number, village, aadhar_no, land_panel_details, species_preferred, purpose, type, created_at, updated_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    `;
+
+    await db.query(insertQuery, [
+      farmer_id,
+      name,
+      mobile_number,
+      village,
+      aadhar_no,
+      land_panel_details,
+      JSON.stringify(species_preferred), 
+      purpose,
+      type
+      // created_at and updated_at are handled by NOW() in the SQL string above
+    ]);
+
+    res.status(201).json({ 
+      message: "Farmer created successfully", 
+      farmer_id: farmer_id 
+    });
+
   } catch (err) {
+    console.error(err);
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Aadhar number already exists.' });
+    }
     res.status(500).json({ error: err.message });
   }
 };
+
+// controllers/users/userController.js
+
+exports.getFarmerAadhar = async (req, res) => {
+  try {
+    const { aadhar_no } = req.query;
+
+    // 1. Check if aadhar_no is provided in query params
+    if (aadhar_no) {
+      const [data] = await db.query(
+        `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
+        [aadhar_no]
+      );
+
+      // If specific aadhar not found
+      if (!data.length) {
+        return res.status(404).json({ error: "Farmer not found with this Aadhar number" });
+      }
+
+      // Return the single farmer object
+      return res.json(data[0]);
+    }
+
+    // 2. If no aadhar_no provided, return ALL farmers
+    const [allData] = await db.query(`SELECT * FROM users_farmeraathardetails`);
+    
+    return res.json(allData);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 
 // ===================== FARMER REQUEST =====================
 
