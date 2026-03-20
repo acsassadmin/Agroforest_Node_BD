@@ -176,8 +176,6 @@ exports.deleteRole = async (req, res) => {
   }
 };
 
-
-
 // ===================== FARMER AADHAR =====================
 // RENAMED to match route 'farmerAadhar'
 
