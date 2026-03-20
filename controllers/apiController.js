@@ -10,16 +10,20 @@ const JWT_REFRESH_SECRET = 'your_refresh_secret_key';
 exports.register = async (req, res) => {
     try {
         const { username, password, email } = req.body;
-        
-        // Hash password (Django does this automatically)
+
+        // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const [result] = await db.query(
-            'INSERT INTO users_customuser (username, password, email) VALUES (?, ?, ?)', 
-            [username, hashedPassword, email]
+        // Generate OTP
+        const otp = Math.floor(100000 + Math.random() * 900000);
+
+        // Store temporarily (you can use Redis or DB)
+        await db.query(
+            'INSERT INTO temp_users (username, email, password, otp) VALUES (?, ?, ?, ?)',
+            [username, email, hashedPassword, otp]
         );
-        
-        res.status(201).json({ message: 'User registered', userId: result.insertId });
+
+        res.json({ message: "OTP sent", otp }); // remove otp in production
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -28,36 +32,50 @@ exports.register = async (req, res) => {
 // 2. Verify OTP (Equivalent to VerifyOtpView)
 exports.verifyOtp = async (req, res) => {
     try {
-        const { user_id, otp } = req.body;
-        // Logic to check OTP in your database
-        // Assuming you have an 'otp' column or table
-        const [rows] = await db.query('SELECT * FROM users_customuser WHERE id = ? AND otp = ?', [user_id, otp]);
-        
-        if (rows.length > 0) {
-            // Mark user as verified
-            await db.query('UPDATE users_customuser SET is_active = 1 WHERE id = ?', [user_id]);
-            res.json({ message: 'OTP Verified' });
-        } else {
-            res.status(400).json({ message: 'Invalid OTP' });
+        const { email, otp } = req.body;
+
+        const [rows] = await db.query(
+            'SELECT * FROM temp_users WHERE email = ? AND otp = ?',
+            [email, otp]
+        );
+
+        if (rows.length === 0) {
+            return res.status(400).json({ message: 'Invalid OTP' });
         }
+
+        const tempUser = rows[0];
+
+        // Now create real user
+        const [result] = await db.query(
+            'INSERT INTO users_customuser (username, email, password) VALUES (?, ?, ?)',
+            [tempUser.username, tempUser.email, tempUser.password]
+        );
+
+        // Delete temp data
+        await db.query('DELETE FROM temp_users WHERE email = ?', [email]);
+
+        res.status(201).json({ message: 'User registered successfully' });
+
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
-
 // 3. Login (Equivalent to CustomTokenObtainPairView)
 exports.login = async (req, res) => {
     try {
-        const { username, password } = req.body;
+        const { email, password } = req.body;
+        console.log(email , "username");
+        console.log(password , "password");
 
-        const [rows] = await db.query('SELECT * FROM users_customuser WHERE username = ?', [username]);
+        const [rows] = await db.query('SELECT * FROM users_customuser WHERE email = ?', [email]);
         
         if (rows.length === 0) {
             return res.status(404).json({ message: 'User not found' });
         }
 
         const user = rows[0];
-
+        console.log("Entered password:", password);
+        console.log("DB hash:", user.password);
         // Check password (Django check_password)
         const isMatch = await bcrypt.compare(password, user.password);
         
@@ -115,7 +133,7 @@ exports.approveItem = async (req, res) => {
 // 7. Roles
 exports.getRoles = async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT * FROM roles'); // Adjust table name
+        const [rows] = await db.query('SELECT * FROM users_role'); // Adjust table name
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
