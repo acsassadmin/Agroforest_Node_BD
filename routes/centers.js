@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const prodController = require('../controllers/Production/productionCenterController');
 const distController = require('../controllers/Production/distributionCenterController');
-
 const stockController = require('../controllers/Production/stockController');
 
 // ======================================================================
