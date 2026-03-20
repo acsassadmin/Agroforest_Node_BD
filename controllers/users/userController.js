@@ -13,8 +13,8 @@ const cache = new NodeCache({ stdTTL: 180 });
 // REGISTER (SEND OTP)
 exports.register = async (req, res) => {
     try {
-        const { username, password, email, phone, role_id } = req.body;
-
+        const { username, password, email, phone, role } = req.body;
+        console.log(username,"user" , password,"user" , email,"user" , phone,"user" , role);
         const [existingUsers] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
         if (existingUsers.length > 0) {
             return res.status(400).json({ message: 'User with this email already exists.' });
@@ -28,7 +28,7 @@ exports.register = async (req, res) => {
             email,
             password: hashedPassword,
             phone: phone || null,
-            role_id: role_id || null,
+            role_id: role,
             otp: otp
         };
 
@@ -77,7 +77,7 @@ exports.verifyOtp = async (req, res) => {
             cachedData.role_id,
             true
         ]);
-
+        console.log(cachedData.role_id , "roleeee")
         await redisClient.del(`register_${email}`);
 
         res.status(201).json({ message: "User registered successfully" });
@@ -92,38 +92,70 @@ exports.verifyOtp = async (req, res) => {
 };
 
 // LOGIN
+// LOGIN
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    // Changed sequelize.query to db.query for consistency
-    const [users] = await db.query(
-      `SELECT u.*, r.name as role_name
-       FROM users_customuser u
-       LEFT JOIN users_role r ON u.role_id = r.id
-       WHERE u.email = ?`,
-      [email]
-    );
+
+    // 1. Query with JOINs to get Role Name and Production Center ID
+    const query = `
+      SELECT 
+        u.id, 
+        u.username, 
+        u.password,
+        u.role_id,
+        r.name as role_name,
+        pc.id as production_center_id
+      FROM users_customuser u
+      LEFT JOIN users_role r ON u.role_id = r.id
+      LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
+      WHERE u.email = ?
+    `;
+
+    const [users] = await db.query(query, [email]);
+
+    if (users.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
     const user = users[0];
-    if (!user) return res.status(404).json({ error: "User not found" });
 
+    // 2. Compare Password
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(400).json({ error: "Wrong password" });
+    if (!match) {
+      return res.status(400).json({ error: "Wrong password" });
+    }
 
-    const token = jwt.sign(
+    // --- Define Secrets (Ideally use process.env) ---
+    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+    const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+    // 3. Generate Access Token (Short lived: e.g., 15 mins)
+    const accessToken = jwt.sign(
       { id: user.id, role: user.role_name },
-      "SECRET", // Ideally use process.env.JWT_SECRET
-      { expiresIn: "1d" }
+      JWT_SECRET,
+      { expiresIn: '15m' }
     );
 
+    // 4. Generate Refresh Token (Long lived: e.g., 7 days)
+    const refreshToken = jwt.sign(
+      { id: user.id },
+      JWT_REFRESH_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // 5. Send Response (Matching Django structure)
     res.json({
-      token,
+      access: accessToken,
+      refresh: refreshToken,
       user_id: user.id,
-      role: user.role_name,
-      user_name: user.username
+      role: user.role_name,             
+      user_name: user.username,
+      production_center_id: user.production_center_id || null 
     });
+
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -198,12 +230,7 @@ exports.farmerAadhar = async (req, res) => {
   }
 };
 
-// You can keep createFarmer separate if needed, or merge it. 
-// For now, adding missing exports used in routes.
-
-
 // ===================== FARMER REQUEST =====================
-// RENAMED to match route 'farmerRequest'
 
 exports.farmerRequest = async (req, res) => {
   try {
