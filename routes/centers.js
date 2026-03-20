@@ -5,8 +5,6 @@ const distController = require('../controllers/Production/distributionCenterCont
 
 const stockController = require('../controllers/Production/stockController');
 
-
-
 // ======================================================================
 
 // --- Types Routes ---
