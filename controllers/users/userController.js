@@ -13,8 +13,8 @@ const cache = new NodeCache({ stdTTL: 180 });
 // REGISTER (SEND OTP)
 exports.register = async (req, res) => {
     try {
-        const { username, password, email, phone, role_id } = req.body;
-
+        const { username, password, email, phone, role } = req.body;
+        console.log(username,"user" , password,"user" , email,"user" , phone,"user" , role);
         const [existingUsers] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
         if (existingUsers.length > 0) {
             return res.status(400).json({ message: 'User with this email already exists.' });
@@ -28,7 +28,7 @@ exports.register = async (req, res) => {
             email,
             password: hashedPassword,
             phone: phone || null,
-            role_id: role_id || null,
+            role_id: role,
             otp: otp
         };
 
@@ -77,7 +77,7 @@ exports.verifyOtp = async (req, res) => {
             cachedData.role_id,
             true
         ]);
-
+        console.log(cachedData.role_id , "roleeee")
         await redisClient.del(`register_${email}`);
 
         res.status(201).json({ message: "User registered successfully" });
@@ -92,38 +92,69 @@ exports.verifyOtp = async (req, res) => {
 };
 
 // LOGIN
+// LOGIN
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    // Changed sequelize.query to db.query for consistency
-    const [users] = await db.query(
-      `SELECT u.*, r.name as role_name
-       FROM users_customuser u
-       LEFT JOIN users_role r ON u.role_id = r.id
-       WHERE u.email = ?`,
-      [email]
-    );
+
+    // 1. Query with JOINs to get Role Name and Production Center ID
+    const query = `
+      SELECT 
+        u.id, 
+        u.username, 
+        u.password,
+        u.role_id,
+        r.name as role_name,
+        pc.id as production_center_id
+      FROM users_customuser u
+      LEFT JOIN users_role r ON u.role_id = r.id
+      LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
+      WHERE u.email = ?
+    `;
+
+    const [users] = await db.query(query, [email]);
+
+    if (users.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
     const user = users[0];
-    if (!user) return res.status(404).json({ error: "User not found" });
 
+    // 2. Compare Password
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(400).json({ error: "Wrong password" });
+    if (!match) {
+      return res.status(400).json({ error: "Wrong password" });
+    }
 
-    const token = jwt.sign(
+    // --- Define Secrets (Ideally use process.env) ---
+    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+    const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+    // 3. Generate Access Token (Short lived: e.g., 15 mins)
+    const accessToken = jwt.sign(
       { id: user.id, role: user.role_name },
-      "SECRET", // Ideally use process.env.JWT_SECRET
-      { expiresIn: "1d" }
+      JWT_SECRET,
+      { expiresIn: '15m' }
     );
 
+    const refreshToken = jwt.sign(
+      { id: user.id },
+      JWT_REFRESH_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // 5. Send Response (Matching Django structure)
     res.json({
-      token,
+      access: accessToken,
+      refresh: refreshToken,
       user_id: user.id,
-      role: user.role_name,
-      user_name: user.username
+      role: user.role_name,             
+      user_name: user.username,
+      production_center_id: user.production_center_id || null 
     });
+
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -138,7 +169,9 @@ exports.refreshToken = async (req, res) => {
 
 exports.getRoles = async (req, res) => {
   try {
-    const [roles] = await db.query(`SELECT * FROM users_role`);
+    const [roles] = await db.query(
+      `SELECT * FROM users_role`
+    );
     res.json(roles);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -177,33 +210,120 @@ exports.deleteRole = async (req, res) => {
 };
 
 // ===================== FARMER AADHAR =====================
-// RENAMED to match route 'farmerAadhar'
 
-exports.farmerAadhar = async (req, res) => {
-  // Assuming this is a GET request based on route name, 
-  // but your route is POST. Adjust logic as needed.
-  // Here I am handling the GET logic from your previous 'getFarmer'
+exports.createFarmer = async (req, res) => {
   try {
-    const { aadhar_no } = req.query;
+    const { 
+      name, 
+      mobile_number, 
+      village, 
+      aadhar_no, 
+      land_panel_details, 
+      species_preferred, // Array [1, 2]
+      purpose, 
+      type 
+    } = req.body;
 
-    const [data] = await db.query(
-      `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
-      [aadhar_no]
+    // 1. Determine Prefix
+    let prefix = '';
+    if (type === 'farmer') {
+      prefix = 'FAR';
+    } else if (type === 'non-farmer') {
+      prefix = 'NFAR';
+    } else {
+      return res.status(400).json({ error: "Invalid type. Must be 'farmer' or 'non-farmer'." });
+    }
+
+    // 2. Find last ID
+    const [rows] = await db.query(
+      `SELECT farmer_id FROM users_farmeraathardetails 
+       WHERE farmer_id LIKE ? 
+       ORDER BY id DESC LIMIT 1`,
+      [`${prefix}%`]
     );
 
-    if (!data.length) return res.status(404).json({ error: "Not found" });
-    res.json(data[0]);
+    // 3. Calculate Next Number
+    let nextNum = 1;
+    if (rows.length > 0) {
+      const lastId = rows[0].farmer_id;
+      const numPart = lastId.replace(prefix, '');
+      const lastNum = parseInt(numPart, 10);
+      nextNum = lastNum + 1;
+    }
+
+    // 4. Format ID
+    const paddedNum = String(nextNum).padStart(3, '0');
+    const farmer_id = `${prefix}${paddedNum}`;
+
+    // 5. Insert Query (Added created_at and updated_at)
+    const insertQuery = `
+      INSERT INTO users_farmeraathardetails 
+      (farmer_id, name, mobile_number, village, aadhar_no, land_panel_details, species_preferred, purpose, type, created_at, updated_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    `;
+
+    await db.query(insertQuery, [
+      farmer_id,
+      name,
+      mobile_number,
+      village,
+      aadhar_no,
+      land_panel_details,
+      JSON.stringify(species_preferred), 
+      purpose,
+      type
+      // created_at and updated_at are handled by NOW() in the SQL string above
+    ]);
+
+    res.status(201).json({ 
+      message: "Farmer created successfully", 
+      farmer_id: farmer_id 
+    });
+
   } catch (err) {
+    console.error(err);
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Aadhar number already exists.' });
+    }
     res.status(500).json({ error: err.message });
   }
 };
 
-// You can keep createFarmer separate if needed, or merge it. 
-// For now, adding missing exports used in routes.
+// controllers/users/userController.js
+
+exports.getFarmerAadhar = async (req, res) => {
+  try {
+    const { aadhar_no } = req.query;
+
+    // 1. Check if aadhar_no is provided in query params
+    if (aadhar_no) {
+      const [data] = await db.query(
+        `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
+        [aadhar_no]
+      );
+
+      // If specific aadhar not found
+      if (!data.length) {
+        return res.status(404).json({ error: "Farmer not found with this Aadhar number" });
+      }
+
+      // Return the single farmer object
+      return res.json(data[0]);
+    }
+
+    // 2. If no aadhar_no provided, return ALL farmers
+    const [allData] = await db.query(`SELECT * FROM users_farmeraathardetails`);
+    
+    return res.json(allData);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
 
 
 // ===================== FARMER REQUEST =====================
-// RENAMED to match route 'farmerRequest'
 
 exports.farmerRequest = async (req, res) => {
   try {
@@ -269,3 +389,4 @@ exports.approveItem = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+

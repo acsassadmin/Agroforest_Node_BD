@@ -2,49 +2,50 @@ const express = require('express');
 const router = express.Router();
 const prodController = require('../controllers/Production/productionCenterController');
 const distController = require('../controllers/Production/distributionCenterController');
-
 const stockController = require('../controllers/Production/stockController');
+const authenticateToken = require('../middleware/authMiddleware'); 
 
-// ======================================================================
+
 
 // --- Types Routes ---
-router.get('/production-center-types/', prodController.getProductionCenterTypes);
-router.post('/production-center-types/', prodController.createProductionCenterType);
-router.put('/production-center-types/', prodController.updateProductionCenterType);
-router.delete('/production-center-types/', prodController.deleteProductionCenterType);
+router.get('/production-center-types/', authenticateToken, prodController.getProductionCenterTypes);
+router.post('/production-center-types/', authenticateToken, prodController.createProductionCenterType);
+router.put('/production-center-types/', authenticateToken, prodController.updateProductionCenterType);
+router.delete('/production-center-types/', authenticateToken, prodController.deleteProductionCenterType);
 
 // ----Production Centers-------
-router.get('/production-centers/', prodController.getProductionCenters);
-router.post('/production-centers/', prodController.uploadMiddleware, prodController.createProductionCenter);
-router.put('/production-centers/', prodController.uploadMiddleware, prodController.updateProductionCenter);
-router.delete('/production-centers/', prodController.deleteProductionCenter);
+router.get('/production-centers/', authenticateToken, prodController.getProductionCenters);
+router.post('/production-centers/', authenticateToken, prodController.uploadMiddleware, prodController.createProductionCenter);
+router.put('/production-centers/', authenticateToken, prodController.uploadMiddleware, prodController.updateProductionCenter);
+router.delete('/production-centers/', authenticateToken, prodController.deleteProductionCenter);
 
 // ----Distribution Centers-------
-router.get('/distribution-centers/', distController.getDistributionCenters);
-router.post('/distribution-centers/', distController.createDistributionCenter);
-router.put('/distribution-centers/', distController.updateDistributionCenter);
-router.delete('/distribution-centers/', distController.deleteDistributionCenter);
+router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
+router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);
+router.put('/distribution-centers/', authenticateToken, distController.updateDistributionCenter);
+router.delete('/distribution-centers/', authenticateToken, distController.deleteDistributionCenter);
 
 // Stock Details
-router.get('/stock-details/', stockController.getStockDetails);
-router.post('/stock-details/', stockController.createStockDetail);
-router.put('/stock-details/', stockController.updateStockDetail);
-router.delete('/stock-details/', stockController.deleteStockDetail);
+router.get('/stock-details/', authenticateToken, stockController.getStockDetails);
+router.post('/stock-details/', authenticateToken, stockController.createStockDetail);
+router.put('/stock-details/', authenticateToken, stockController.updateStockDetail);
+router.delete('/stock-details/', authenticateToken, stockController.deleteStockDetail);
+
+router.get('/trees', authenticateToken, stockController.getSpecies);
 
 // Targets
-router.get('/targets/', stockController.getTargets);
-router.post('/targets/', stockController.createTarget);
-router.put('/targets/', stockController.updateTarget);
-router.delete('/targets/', stockController.deleteTarget);
+router.get('/targets/', authenticateToken, stockController.getTargets);
+router.post('/targets/', authenticateToken, stockController.createTarget);
+router.put('/targets/', authenticateToken, stockController.updateTarget);
+router.delete('/targets/', authenticateToken, stockController.deleteTarget);
 
 // Stock Requests
-router.get('/stock-requests/', stockController.getStockRequests);
-router.post('/stock-requests/', stockController.createStockRequest);
-router.put('/stock-requests/', stockController.handleStockRequest);
+router.get('/stock-requests/', authenticateToken, stockController.getStockRequests);
+router.post('/stock-requests/', authenticateToken, stockController.createStockRequest);
+router.put('/stock-requests/', authenticateToken, stockController.handleStockRequest);
 
 // Excel & Dashboard
-router.get('/production-centers/excel/', stockController.downloadExcel);
-router.get('/dashboard-summary/', stockController.getDashboardSummary);
-
+router.get('/production-centers/excel/', authenticateToken, stockController.downloadExcel);
+router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
 
 module.exports = router;
