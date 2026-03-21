@@ -122,25 +122,103 @@ exports.getStockDetails = async (req, res) => {
 
 exports.createStockDetail = async (req, res) => {
     try {
-        // Handle Bulk or Single
         const data = Array.isArray(req.body) ? req.body : [req.body];
         const userId = req.user?.id || 1;
 
-        // Simple bulk insert loop (Transaction recommended for production)
         const insertedIds = [];
-        
+
         for (const item of data) {
+
+            const now = new Date();
+
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+
+            // ✅ Dates
+            const productionDate = item.production_date 
+                ? new Date(item.production_date) 
+                : now;
+
+            const expiryDate = new Date(item.expiry_date);
+            const currentDate = now;
+
+            // ✅ Calculate sapling_age
+            let years = expiryDate.getFullYear() - productionDate.getFullYear();
+            let months = expiryDate.getMonth() - productionDate.getMonth();
+            let days = expiryDate.getDate() - productionDate.getDate();
+
+            if (days < 0) {
+                months -= 1;
+            }
+
+            if (months < 0) {
+                years -= 1;
+                months += 12;
+            }
+
+            let saplingAge = "";
+            if (years > 0) {
+                saplingAge = `${years} year${years > 1 ? 's' : ''}`;
+                if (months > 0) {
+                    saplingAge += ` ${months} month${months > 1 ? 's' : ''}`;
+                }
+            } else {
+                saplingAge = `${months} month${months > 1 ? 's' : ''}`;
+            }
+
+            // ✅ Lot number logic
+            const [rows] = await db.query(
+                `SELECT lot_number 
+                 FROM productioncenter_stockdetails 
+                 WHERE lot_number LIKE ? 
+                 ORDER BY id DESC LIMIT 1`,
+                [`L%-%-${year}`]
+            );
+
+            let nextNumber = 1;
+
+            if (rows.length > 0) {
+                const lastLot = rows[0].lot_number;
+                const lastSeq = parseInt(lastLot.substring(1, 4));
+                nextNumber = lastSeq + 1;
+            }
+
+            const sequence = String(nextNumber).padStart(3, '0');
+            const lotNumber = `L${sequence}-${month}-${year}`;
+
+            // ✅ Insert with backticks around current_date
             const [result] = await db.query(
                 `INSERT INTO productioncenter_stockdetails 
-                (production_center_id, species_name, saplings_available, allocated_quantity, sapling_age, price_per_sapling, created_by) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [item.production_center, item.species_name, item.saplings_available, item.allocated_quantity || 0, item.sapling_age, item.price_per_sapling, userId]
+                (production_center_id, species_id, saplings_available, allocated_quantity, sapling_age, price_per_sapling, created_by_id, lot_number, production_date, expiry_date, \`current_date\`, created_at, updated_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+                [
+                    item.production_center,
+                    item.species_id,
+                    item.saplings_available,
+                    item.allocated_quantity || 0,
+                    saplingAge,
+                    item.price_per_sapling,
+                    userId,
+                    lotNumber,
+                    productionDate,
+                    expiryDate,
+                    currentDate
+                ]
             );
-            insertedIds.push(result.insertId);
+
+            insertedIds.push({
+                id: result.insertId,
+                lot_number: lotNumber,
+                sapling_age: saplingAge
+            });
         }
 
         await clearStockCache();
-        res.status(201).json({ message: "Created successfully", ids: insertedIds });
+
+        res.status(201).json({
+            message: "Created successfully",
+            data: insertedIds
+        });
 
     } catch (err) {
         res.status(400).json({ error: err.message });
@@ -463,4 +541,17 @@ exports.getDashboardSummary = async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+};
+
+exports.getSpecies = async (req, res) => {
+  try {
+    const query = `SELECT * FROM tbl_agroforest_trees`;
+    
+    const [rows] = await db.query(query);
+    
+    res.status(200).json(rows);
+  } catch (err) {
+    console.error("Error fetching trees:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
