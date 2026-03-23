@@ -19,6 +19,8 @@ const reportRoutes = require("./routes/report");
 const targetDepartmentRoutes = require('./routes/targetdepartment');
 const targetDistrictRoutes = require('./routes/targetdistrict');
 const targetBlockRoutes = require('./routes/targetblock');
+const targetProductionCenterRoutes = require('./routes/targetproductioncenter');
+
 
 
 
@@ -35,6 +37,8 @@ app.use('/report', reportRoutes);
 app.use('/targetdepartment', targetDepartmentRoutes);
 app.use('/targetdistrict', targetDistrictRoutes);
 app.use('/targetblock', targetBlockRoutes);
+app.use('/targetproductioncenter', targetProductionCenterRoutes);
+
 
 app.use('/master', masterRoutes);
 
