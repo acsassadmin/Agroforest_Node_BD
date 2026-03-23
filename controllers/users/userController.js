@@ -293,6 +293,102 @@ exports.createFarmer = async (req, res) => {
   }
 };
 
+exports.updateFarmer = async (req, res) => {
+  try {
+    // 1. Get Farmer ID from URL params (e.g., FAR001 or NFAR001)
+    const { id } = req.params;
+
+    // 2. Destructure fields from body
+    // We focus on species_preferred, but allow updating other fields if provided
+    const { 
+      species_preferred, 
+      name, 
+      mobile_number, 
+      village_id, 
+      block_id, 
+      district_id, 
+      purpose, 
+      land_panel_details 
+    } = req.body;
+
+    // 3. Validation: Ensure there is something to update
+    if (!species_preferred && !name && !mobile_number && !village_id) {
+      return res.status(400).json({ error: "No fields provided for update." });
+    }
+
+    // 4. Build Dynamic SQL Query
+    // This allows updating specific fields without overwriting others
+    let updateFields = [];
+    let queryParams = [];
+
+    if (name) {
+      updateFields.push("name = ?");
+      queryParams.push(name);
+    }
+    if (mobile_number) {
+      updateFields.push("mobile_number = ?");
+      queryParams.push(mobile_number);
+    }
+    if (district_id) {
+      updateFields.push("district_id = ?");
+      queryParams.push(district_id);
+    }
+    if (block_id) {
+      updateFields.push("block_id = ?");
+      queryParams.push(block_id);
+    }
+    if (village_id) {
+      updateFields.push("village_id = ?");
+      queryParams.push(village_id);
+    }
+    if (purpose) {
+      updateFields.push("purpose = ?");
+      queryParams.push(purpose);
+    }
+    if (land_panel_details) {
+      updateFields.push("land_panel_details = ?");
+      queryParams.push(land_panel_details);
+    }
+
+    // Handle Species Preferred (JSON stringification)
+    if (species_preferred) {
+      updateFields.push("species_preferred = ?");
+      // Convert array to JSON string for MySQL
+      queryParams.push(JSON.stringify(species_preferred));
+    }
+
+    // Always update the updated_at timestamp
+    updateFields.push("updated_at = NOW()");
+
+    // Add the ID to the end of params for the WHERE clause
+    queryParams.push(id);
+
+    const updateQuery = `
+      UPDATE users_farmeraathardetails 
+      SET ${updateFields.join(', ')} 
+      WHERE farmer_id = ?
+    `;
+
+    // 5. Execute Query
+    const [result] = await db.query(updateQuery, queryParams);
+
+    // 6. Check if row exists
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Farmer not found with ID: " + id });
+    }
+
+    res.status(200).json({ 
+      message: "Farmer details updated successfully", 
+      farmer_id: id 
+    });
+
+  } catch (err) {
+    console.error("Update Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
 // controllers/users/userController.js
 
 exports.getFarmerAadhar = async (req, res) => {

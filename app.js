@@ -16,6 +16,8 @@ const centerRoutes = require('./routes/centers');
 const officerRoutes = require('./routes/officers');
 const targetRoutes = require("./routes/target");
 const reportRoutes = require("./routes/report");
+const masterRoutes = require("./routes/master");
+
 
 
 
@@ -24,6 +26,8 @@ app.use('/center', centerRoutes);
 app.use('/officers', officerRoutes);
 app.use('/target', targetRoutes);
 app.use('/report', reportRoutes);
+app.use('/master', masterRoutes);
+
 
 
 
