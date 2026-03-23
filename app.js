@@ -22,6 +22,7 @@ const targetBlockRoutes = require('./routes/targetblock');
 
 
 
+const masterRoutes = require("./routes/master");
 
 
 
@@ -35,6 +36,7 @@ app.use('/targetdepartment', targetDepartmentRoutes);
 app.use('/targetdistrict', targetDistrictRoutes);
 app.use('/targetblock', targetBlockRoutes);
 
+app.use('/master', masterRoutes);
 
 
 
