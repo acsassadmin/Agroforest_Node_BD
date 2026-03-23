@@ -601,11 +601,11 @@ try {
     connection.release();
   }
 };
-
 exports.getCenterOrders = async (req, res) => {
     try {
-        const { production_center_id, user_id } = req.query;
+        const { production_center_id, user_id, limit, offset } = req.query;
 
+        // Log incoming query params for debugging
         console.log("👉 Incoming Query Params:", req.query);
 
         // ✅ At least one filter required
@@ -636,6 +636,16 @@ exports.getCenterOrders = async (req, res) => {
         console.log("👉 WHERE Clause:", whereClause);
         console.log("👉 Params:", params);
 
+        // Handle pagination (limit and offset)
+        let limitValue = limit ? parseInt(limit) : undefined;
+        let offsetValue = offset ? parseInt(offset) : undefined;
+        
+        if (isNaN(limitValue)) limitValue = undefined;
+        if (isNaN(offsetValue)) offsetValue = undefined;
+
+        const limitClause = limitValue ? `LIMIT ?` : "";
+        const offsetClause = offsetValue ? `OFFSET ?` : "";
+
         // 1. Fetch raw flat data
         const query = `
             SELECT 
@@ -660,15 +670,19 @@ exports.getCenterOrders = async (req, res) => {
             LEFT JOIN tbl_agroforest_trees t ON fri.species_id = t.id
             ${whereClause}
             ORDER BY fr.created_at DESC
+            ${limitClause} ${offsetClause}
         `;
 
+        // Log final query and parameters
         console.log("👉 Final Query:", query);
+        console.log("👉 Params for query:", [...params, limitValue, offsetValue]);
 
-        const [rows] = await db.query(query, params);
+        // Execute the query with sanitized parameters
+        const [rows] = await db.query(query, [...params, limitValue, offsetValue].filter(Boolean));
 
         console.log("👉 Raw DB Rows Count:", rows.length);
 
-        // 2. Group orders
+        // 2. Group orders by request_id
         const ordersMap = {};
 
         rows.forEach(row => {
@@ -701,8 +715,10 @@ exports.getCenterOrders = async (req, res) => {
 
         const results = Object.values(ordersMap);
 
-        console.log("👉 Final Response Count:", results.length);
+        // Log the final response count after grouping
+        console.log("👉 Final Results Count After Grouping:", results.length);
 
+        // Return the grouped results
         res.json({
             count: results.length,
             results
@@ -713,6 +729,7 @@ exports.getCenterOrders = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
 
 exports.getTnSchemas = async (req, res) => {
     try {

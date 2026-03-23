@@ -149,38 +149,17 @@ exports.createStockDetail = async (req, res) => {
             const month = String(now.getMonth() + 1).padStart(2, '0');
 
             // ✅ Dates
-            const productionDate = item.production_date 
-                ? new Date(item.production_date) 
+            const productionDate = item.production_date
+                ? new Date(item.production_date)
                 : now;
 
-            const expiryDate = new Date(item.expiry_date);
-            const currentDate = now;
+            const expiryDate = item.expiry_date ? new Date(item.expiry_date) : null;
 
-            // ✅ Calculate sapling_age
-            let years = expiryDate.getFullYear() - productionDate.getFullYear();
-            let months = expiryDate.getMonth() - productionDate.getMonth();
-            let days = expiryDate.getDate() - productionDate.getDate();
+            // ❌ REMOVED: sapling_age calculation completely
+            // ✅ NOW COMES FROM FRONTEND
+            const saplingAge = item.sapling_age || "";
 
-            if (days < 0) {
-                months -= 1;
-            }
-
-            if (months < 0) {
-                years -= 1;
-                months += 12;
-            }
-
-            let saplingAge = "";
-            if (years > 0) {
-                saplingAge = `${years} year${years > 1 ? 's' : ''}`;
-                if (months > 0) {
-                    saplingAge += ` ${months} month${months > 1 ? 's' : ''}`;
-                }
-            } else {
-                saplingAge = `${months} month${months > 1 ? 's' : ''}`;
-            }
-
-            // ✅ Lot number logic
+            // ✅ Lot number logic (unchanged)
             const [rows] = await db.query(
                 `SELECT lot_number 
                  FROM productioncenter_stockdetails 
@@ -200,7 +179,7 @@ exports.createStockDetail = async (req, res) => {
             const sequence = String(nextNumber).padStart(3, '0');
             const lotNumber = `L${sequence}-${month}-${year}`;
 
-            // ✅ Insert with backticks around current_date
+            // ✅ INSERT
             const [result] = await db.query(
                 `INSERT INTO productioncenter_stockdetails 
                 (production_center_id, species_id, saplings_available, allocated_quantity, sapling_age, price_per_sapling, created_by_id, lot_number, production_date, expiry_date, \`current_date\`, created_at, updated_at) 
@@ -210,13 +189,13 @@ exports.createStockDetail = async (req, res) => {
                     item.species_id,
                     item.saplings_available,
                     item.allocated_quantity || 0,
-                    saplingAge,
+                    saplingAge, // ✅ FROM FRONTEND
                     item.price_per_sapling,
                     userId,
                     lotNumber,
                     productionDate,
                     expiryDate,
-                    currentDate
+                    now
                 ]
             );
 
