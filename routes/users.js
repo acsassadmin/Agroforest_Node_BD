@@ -18,6 +18,7 @@ router.put('/approve-item/:id', authenticateToken, userController.approveItem);
 router.post('/farmer-aadhar/', authenticateToken, userController.createFarmer);
 router.get('/farmer-aadhar/', authenticateToken, userController.getFarmerAadhar);
 router.get('/farmer-request/', authenticateToken, userController.getCenterOrders);
+router.put('/farmer-aadhar/:id', userController.updateFarmer);
 
 router.get('/tn-schema/', authenticateToken, userController.getTnSchemas);
 router.put('/request-header/:id', authenticateToken, userController.updateRequestHeader);
