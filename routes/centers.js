@@ -53,4 +53,5 @@ router.put('/stock-requests/', authenticateToken, stockController.handleStockReq
 router.get('/production-centers/excel/', authenticateToken, stockController.downloadExcel);
 router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
 
+
 module.exports = router;
