@@ -219,8 +219,8 @@ exports.createProductionCenter = async (req, res) => {
             `INSERT INTO productioncenter_productioncenter
             (production_center_type_id, production_type, status, name_of_production_centre,
              complete_address, district_id, block_id, village_id, contact_person, mobile_number,
-             latitude, longitude, nursery_capacity, certification_details, created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+             latitude, longitude, nursery_capacity, certification_details, nursery_category , created_by_id)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
                 body.production_center_type_id,
                 body.production_type || 'government',
@@ -235,6 +235,7 @@ exports.createProductionCenter = async (req, res) => {
                 body.longitude,
                 body.nursery_capacity,
                 body.certification_details,
+                body.nursery_category ,
                 userId
             ]
         );
@@ -316,7 +317,8 @@ exports.updateProductionCenter = async (req, res) => {
             nursery_capacity: 'nursery_capacity',
             certification_details: 'certification_details',
             status: 'status',                 // For Officer Approval
-            rejected_comment: 'rejected_comment' // For Officer Rejection
+            rejected_comment: 'rejected_comment', // For Officer Rejection
+            nursery_category: 'nursery_category'
         };
 
         Object.keys(fieldMap).forEach(key => {
