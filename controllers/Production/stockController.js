@@ -28,21 +28,18 @@ exports.getStockDetails = async (req, res) => {
 
         // 1. Cache Key
         const cacheKey = `stock_details_${production_center_id || 'all'}_${species_id || 'sim'}_${species_name || 'sna'}_page${page}_lat${latitude || 'x'}_lng${longitude || 'x'}`;
-        
+        //  await redisClient.del(cacheKey); 
         const cachedData = await redisClient.get(cacheKey);
         if (cachedData) return res.json(JSON.parse(cachedData));
 
         let whereClauses = [];
         let params = [];
 
-        // 2. GeoLocation Logic (Find nearest center)
+        // 2. GeoLocation Logic
         if (latitude && longitude) {
             const lat = parseFloat(latitude);
             const lng = parseFloat(longitude);
-            const MAX_DISTANCE_KM = 25;
 
-            // Find nearest center using Haversine formula
-            // Note: productioncenter_productioncenter is the table name for ProductionCenter
             const [centers] = await db.query(`
                 SELECT id, (
                     6371 * acos(
@@ -55,8 +52,6 @@ exports.getStockDetails = async (req, res) => {
             `, [lat, lng, lat]);
 
             if (centers.length > 0) {
-                // If nearest is within 25km, use it. Else use the absolute nearest (first in list).
-                // Django logic: first checks <= 25km, if none, takes nearest.
                 const nearest = centers[0]; 
                 whereClauses.push('sd.production_center_id = ?');
                 params.push(nearest.id);
@@ -69,15 +64,15 @@ exports.getStockDetails = async (req, res) => {
         }
 
         if (production_center_id && species_id) {
-             // Overwrite previous filters if specific species_id is requested with center
              whereClauses.length = 0; 
              params.length = 0;
              whereClauses.push('sd.production_center_id = ? AND sd.id = ?');
              params.push(production_center_id, species_id);
         }
 
+        // Search by species name from the trees table
         if (species_name) {
-            whereClauses.push('sd.species_name LIKE ?');
+            whereClauses.push('trees.name LIKE ?');
             params.push(`%${species_name}%`);
         }
 
@@ -87,24 +82,43 @@ exports.getStockDetails = async (req, res) => {
         
         // Count Query
         const [countRows] = await db.query(`
-            SELECT COUNT(*) as count FROM productioncenter_stockdetails sd
+            SELECT COUNT(*) as count 
+            FROM productioncenter_stockdetails sd
+            LEFT JOIN tbl_agroforest_trees trees ON sd.species_id = trees.id
             ${whereClauses.length ? 'WHERE ' + whereClauses.join(' AND ') : ''}
         `, params);
         const totalItems = countRows[0].count;
 
-        // Data Query with Join to get center name/address
+        // Data Query
         const [rows] = await db.query(`
-            SELECT sd.*, 
-                   pc.complete_address as pc_address, 
-                   pc.name_of_production_centre as pc_name
+            SELECT 
+                sd.*, 
+                pc.complete_address as pc_address, 
+                pc.name_of_production_centre as pc_name,
+                trees.name as species_name,
+                trees.s_name as scientific_name,
+                trees.name_tamil as species_name_tamil
             FROM productioncenter_stockdetails sd
             LEFT JOIN productioncenter_productioncenter pc ON sd.production_center_id = pc.id
+            LEFT JOIN tbl_agroforest_trees trees ON sd.species_id = trees.id
             ${whereClauses.length ? 'WHERE ' + whereClauses.join(' AND ') : ''}
             ORDER BY sd.id DESC
             LIMIT ? OFFSET ?
         `, [...params, limit, offset]);
 
-        const formatted = formatStockResponse(rows);
+        // ✅ FIX: Manually map to ensure new fields are included in response
+        // If you have a formatStockResponse function, you must update it to include these fields.
+        // Replacing it with inline mapping here to guarantee it works:
+        const formatted = rows.map(row => ({
+            ...row,
+            production_center_address: row.pc_address,
+            production_center_name: row.pc_name,
+            // Ensure these fields exist even if null
+            species_name: row.species_name || null,
+            scientific_name: row.scientific_name || null,
+            species_name_tamil: row.species_name_tamil || null
+        }));
+
         const responseData = {
             count: totalItems,
             next: totalItems > (offset + limit) ? `?page=${parseInt(page) + 1}` : null,
@@ -135,38 +149,17 @@ exports.createStockDetail = async (req, res) => {
             const month = String(now.getMonth() + 1).padStart(2, '0');
 
             // ✅ Dates
-            const productionDate = item.production_date 
-                ? new Date(item.production_date) 
+            const productionDate = item.production_date
+                ? new Date(item.production_date)
                 : now;
 
-            const expiryDate = new Date(item.expiry_date);
-            const currentDate = now;
+            const expiryDate = item.expiry_date ? new Date(item.expiry_date) : null;
 
-            // ✅ Calculate sapling_age
-            let years = expiryDate.getFullYear() - productionDate.getFullYear();
-            let months = expiryDate.getMonth() - productionDate.getMonth();
-            let days = expiryDate.getDate() - productionDate.getDate();
+            // ❌ REMOVED: sapling_age calculation completely
+            // ✅ NOW COMES FROM FRONTEND
+            const saplingAge = item.sapling_age || "";
 
-            if (days < 0) {
-                months -= 1;
-            }
-
-            if (months < 0) {
-                years -= 1;
-                months += 12;
-            }
-
-            let saplingAge = "";
-            if (years > 0) {
-                saplingAge = `${years} year${years > 1 ? 's' : ''}`;
-                if (months > 0) {
-                    saplingAge += ` ${months} month${months > 1 ? 's' : ''}`;
-                }
-            } else {
-                saplingAge = `${months} month${months > 1 ? 's' : ''}`;
-            }
-
-            // ✅ Lot number logic
+            // ✅ Lot number logic (unchanged)
             const [rows] = await db.query(
                 `SELECT lot_number 
                  FROM productioncenter_stockdetails 
@@ -186,7 +179,7 @@ exports.createStockDetail = async (req, res) => {
             const sequence = String(nextNumber).padStart(3, '0');
             const lotNumber = `L${sequence}-${month}-${year}`;
 
-            // ✅ Insert with backticks around current_date
+            // ✅ INSERT
             const [result] = await db.query(
                 `INSERT INTO productioncenter_stockdetails 
                 (production_center_id, species_id, saplings_available, allocated_quantity, sapling_age, price_per_sapling, created_by_id, lot_number, production_date, expiry_date, \`current_date\`, created_at, updated_at) 
@@ -196,13 +189,13 @@ exports.createStockDetail = async (req, res) => {
                     item.species_id,
                     item.saplings_available,
                     item.allocated_quantity || 0,
-                    saplingAge,
+                    saplingAge, // ✅ FROM FRONTEND
                     item.price_per_sapling,
                     userId,
                     lotNumber,
                     productionDate,
                     expiryDate,
-                    currentDate
+                    now
                 ]
             );
 
