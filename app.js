@@ -14,10 +14,18 @@ app.get('/', (req, res) => {
 const userRoutes = require('./routes/users');
 const centerRoutes = require('./routes/centers');
 const officerRoutes = require('./routes/officers');
+const targetRoutes = require("./routes/target");
+const reportRoutes = require("./routes/report");
+
+
 
 app.use('/users', userRoutes);
 app.use('/center', centerRoutes);
 app.use('/officers', officerRoutes);
+app.use('/target', targetRoutes);
+app.use('/report', reportRoutes);
+
+
 
 // Start the server
 app.listen(PORT, () => {
