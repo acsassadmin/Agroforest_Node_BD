@@ -91,13 +91,11 @@ exports.verifyOtp = async (req, res) => {
     }
 };
 
-// LOGIN
-// LOGIN
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // 1. Query with JOINs to get Role Name and Production Center ID
+    // 1. Query with JOINs to get Role Name, Production Center ID, and Status
     const query = `
       SELECT 
         u.id, 
@@ -105,7 +103,8 @@ exports.login = async (req, res) => {
         u.password,
         u.role_id,
         r.name as role_name,
-        pc.id as production_center_id
+        pc.id as production_center_id,
+        pc.status as production_center_status
       FROM users_customuser u
       LEFT JOIN users_role r ON u.role_id = r.id
       LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
@@ -143,14 +142,15 @@ exports.login = async (req, res) => {
       { expiresIn: '7d' }
     );
     
-    // 5. Send Response (Matching Django structure)
+    // 5. Send Response
     res.json({
       access: accessToken,
       refresh: refreshToken,
       user_id: user.id,
       role: user.role_name,             
       user_name: user.username,
-      production_center_id: user.production_center_id || null 
+      production_center_id: user.production_center_id || null,
+      production_center_status: user.production_center_status || null // Added Status
     });
 
   } catch (err) {
@@ -216,10 +216,12 @@ exports.createFarmer = async (req, res) => {
     const { 
       name, 
       mobile_number, 
-      village, 
+      district_id,  // Updated: matches payload and DB
+      block_id,     // Updated: matches payload and DB
+      village_id,   // Updated: matches payload and DB
       aadhar_no, 
       land_panel_details, 
-      species_preferred, // Array [1, 2]
+      species_preferred, 
       purpose, 
       type 
     } = req.body;
@@ -255,24 +257,26 @@ exports.createFarmer = async (req, res) => {
     const paddedNum = String(nextNum).padStart(3, '0');
     const farmer_id = `${prefix}${paddedNum}`;
 
-    // 5. Insert Query (Added created_at and updated_at)
+    // 5. Insert Query
+    // Updated column names to match your DB schema (district_id, block_id, village_id)
     const insertQuery = `
       INSERT INTO users_farmeraathardetails 
-      (farmer_id, name, mobile_number, village, aadhar_no, land_panel_details, species_preferred, purpose, type, created_at, updated_at) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      (farmer_id, name, mobile_number, aadhar_no, district_id, block_id, village_id, land_panel_details, species_preferred, purpose, type, created_at, updated_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `;
 
     await db.query(insertQuery, [
       farmer_id,
       name,
       mobile_number,
-      village,
       aadhar_no,
+      district_id,              // Matches district_id column
+      block_id,                 // Matches block_id column
+      village_id,               // Matches village_id column
       land_panel_details,
       JSON.stringify(species_preferred), 
       purpose,
       type
-      // created_at and updated_at are handled by NOW() in the SQL string above
     ]);
 
     res.status(201).json({ 
@@ -324,69 +328,426 @@ exports.getFarmerAadhar = async (req, res) => {
 
 
 // ===================== FARMER REQUEST =====================
-
 exports.farmerRequest = async (req, res) => {
-  try {
-    const { requested_species, ...data } = req.body;
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
 
-    // Insert Request
-    const [result] = await db.query(
-      `INSERT INTO users_farmerrequest
-       (farmer_id, name, mobile_number, village, status, created_at)
-       VALUES (?, ?, ?, ?, 'pending', NOW())`,
-       [data.farmer_id, data.name, data.mobile_number, data.village]
-    );
+        // 1. Destructure from frontend payload
+        const { farmer_id, production_center_id, items } = req.body;
+        const userId = req.user?.id || 1; // ID of logged-in user (officer/farmer)
 
-    const requestId = result.insertId;
+        // Validation
+        if (!farmer_id || !production_center_id || !items || items.length === 0) {
+            return res.status(400).json({ 
+                error: "Farmer ID, Production Center, and Items are required" 
+            });
+        }
 
-    // Generate ORDER ID
-    const orderId = `ORD${String(requestId).padStart(4, "0")}`;
+        // 2. Insert into users_farmerrequest (Header Table)
+        const [result] = await connection.query(
+            `INSERT INTO users_farmerrequest 
+             (farmer_id, status, created_at, created_by_id, production_center_id) 
+             VALUES (?, 'pending', NOW(), ?, ?)`,
+            [farmer_id, userId, production_center_id] // <- fixed
+        );
 
-    await db.query(
-      `UPDATE users_farmerrequest SET orderid = ? WHERE id = ?`,
-      [orderId, requestId]
-    );
+        const requestId = result.insertId;
 
-    // Insert Items
-    for (let item of requested_species) {
-      await db.query(
-        `INSERT INTO users_farmerrequestitem
-         (request_id, stock_id, requested_quantity, status, created_at)
-         VALUES (?, ?, ?, 'pending', NOW())`,
-         [requestId, item.species_id, item.saplings_requested]
-      );
+        // 3. Generate Order ID (Format: A-YYYYMMDD-XXXX)
+        const today = new Date();
+        const dateStr = today.toISOString().slice(0, 10).replace(/-/g, ""); // e.g., 20260321
+        const paddedId = String(requestId).padStart(4, "0"); // e.g., 0001
+        const orderId = `A-${dateStr}-${paddedId}`; // Final: A-20260321-0001
+
+        await connection.query(
+            `UPDATE users_farmerrequest SET orderid = ? WHERE id = ?`,
+            [orderId, requestId]
+        );
+
+        // 4. Insert Items into users_farmerrequestitem
+        const itemValues = items.map(item => [
+            requestId,              // request_id
+            item.stock_id,          // stock_id
+            item.species_id || null,// species_id (optional)
+            item.quantity,          // requested_quantity
+            'pending',              // status
+            new Date()              // created_at
+        ]);
+
+        await connection.query(
+            `INSERT INTO users_farmerrequestitem 
+             (request_id, stock_id, species_id, requested_quantity, status, created_at) 
+             VALUES ?`,
+            [itemValues]
+        );
+
+        await connection.commit();
+
+        res.status(201).json({ 
+            message: "Order placed successfully", 
+            order_id: orderId, 
+            request_id: requestId 
+        });
+
+    } catch (err) {
+        await connection.rollback();
+        console.error("Order Error:", err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        connection.release();
     }
-
-    res.json({ message: "Request created", request_id: requestId });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 };
-
-// RENAMED to match route 'approveItem'
 exports.approveItem = async (req, res) => {
+  const connection = await db.getConnection();
   try {
-    const { action, item_id, approved_quantity } = req.body;
+    await connection.beginTransaction();
+
+    const { id } = req.params;
+    const { action, approved_quantity } = req.body;
+
+    console.log("Incoming Request:", { id, action, approved_quantity });
 
     if (action === "approve") {
-      await db.query(
-        `UPDATE users_farmerrequestitem
-         SET approved_quantity=?, status='approved'
-         WHERE id=?`,
-         [approved_quantity, item_id]
+      if (approved_quantity === undefined || approved_quantity === null) {
+        return res.status(400).json({ error: "Approved quantity is required" });
+      }
+
+      // 1. Update request item
+      const [updateResult] = await connection.query(
+        `UPDATE users_farmerrequestitem 
+         SET approved_quantity = ?, status = 'approved' 
+         WHERE id = ?`,
+        [approved_quantity, id]
       );
+
+      console.log("Request Item Updated:", updateResult);
+
+      // 2. Get stock_id
+      const [itemRows] = await connection.query(
+        `SELECT stock_id FROM users_farmerrequestitem WHERE id = ?`,
+        [id]
+      );
+
+      console.log("Fetched Item Rows:", itemRows);
+
+      if (itemRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      const stockId = itemRows[0].stock_id;
+      console.log("Stock ID:", stockId);
+
+      // OPTIONAL: Check current allocated_quantity BEFORE update
+      const [beforeStock] = await connection.query(
+        `SELECT allocated_quantity FROM productioncenter_stockdetails WHERE id = ?`,
+        [stockId]
+      );
+
+      console.log("Before Update Stock:", beforeStock);
+
+      // 3. Update stock
+      const [stockUpdateResult] = await connection.query(
+        `UPDATE productioncenter_stockdetails 
+         SET allocated_quantity = allocated_quantity + ? 
+         WHERE id = ?`,
+        [approved_quantity, stockId]
+      );
+
+      console.log("Stock Update Result:", stockUpdateResult);
+
+      // OPTIONAL: Check AFTER update
+      const [afterStock] = await connection.query(
+        `SELECT allocated_quantity FROM productioncenter_stockdetails WHERE id = ?`,
+        [stockId]
+      );
+
+      console.log("After Update Stock:", afterStock);
+
     } else if (action === "reject") {
-      await db.query(
-        `UPDATE users_farmerrequestitem
-         SET status='rejected', approved_quantity=0
-         WHERE id=?`,
-         [item_id]
+      const [rejectResult] = await connection.query(
+        `UPDATE users_farmerrequestitem 
+         SET status = 'rejected', approved_quantity = 0 
+         WHERE id = ?`,
+        [id]
       );
+
+      console.log("Reject Result:", rejectResult);
+    } else {
+      return res.status(400).json({ error: "Invalid action" });
     }
 
-    res.json({ message: "Updated" });
+    await connection.commit();
+    console.log("Transaction committed successfully");
+
+    // ✅ CLEAR CACHE HERE
+try {
+  const keys = await redisClient.keys("stock_details_*");
+  if (keys.length > 0) {
+    await redisClient.del(keys);
+    console.log("🧹 Stock cache cleared:", keys);
+  } else {
+    console.log("ℹ️ No cache keys found");
+  }
+} catch (cacheErr) {
+  console.error("Cache clearing error:", cacheErr);
+}
+
+
+    res.json({ message: "Updated successfully" });
+
   } catch (err) {
+    await connection.rollback();
+    console.error("Approve Item Error:", err);
     res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
   }
 };
 
+exports.getCenterOrders = async (req, res) => {
+    try {
+        const { production_center_id, user_id } = req.query;
+
+        console.log("👉 Incoming Query Params:", req.query);
+
+        // ✅ At least one filter required
+        if (!production_center_id && !user_id) {
+            return res.status(400).json({
+                error: "Either production_center_id or user_id is required"
+            });
+        }
+
+        // ✅ Dynamic WHERE clause
+        let whereConditions = [];
+        let params = [];
+
+        if (production_center_id) {
+            whereConditions.push(`fr.production_center_id = ?`);
+            params.push(production_center_id);
+        }
+
+        if (user_id) {
+            whereConditions.push(`fr.created_by_id = ?`);
+            params.push(user_id);
+        }
+
+        const whereClause = whereConditions.length
+            ? `WHERE ${whereConditions.join(" AND ")}`
+            : "";
+
+        console.log("👉 WHERE Clause:", whereClause);
+        console.log("👉 Params:", params);
+
+        // 1. Fetch raw flat data
+        const query = `
+            SELECT 
+                fr.id as request_id,
+                fr.orderid,
+                fr.status as order_status,
+                fr.created_at as order_date,
+                f.name as farmer_name,
+                f.mobile_number as farmer_mobile,
+                f.farmer_id as farmer_code,
+                fri.id as item_id,
+                fri.stock_id,
+                fri.species_id,
+                fri.requested_quantity,
+                fri.approved_quantity,
+                fri.status as item_status,
+                t.name as species_name,
+                t.name_tamil as species_name_tamil
+            FROM users_farmerrequest fr
+            JOIN users_farmerrequestitem fri ON fr.id = fri.request_id
+            LEFT JOIN users_farmeraathardetails f ON fr.farmer_id = f.farmer_id
+            LEFT JOIN tbl_agroforest_trees t ON fri.species_id = t.id
+            ${whereClause}
+            ORDER BY fr.created_at DESC
+        `;
+
+        console.log("👉 Final Query:", query);
+
+        const [rows] = await db.query(query, params);
+
+        console.log("👉 Raw DB Rows Count:", rows.length);
+
+        // 2. Group orders
+        const ordersMap = {};
+
+        rows.forEach(row => {
+            if (!ordersMap[row.request_id]) {
+                ordersMap[row.request_id] = {
+                    request_id: row.request_id,
+                    orderid: row.orderid,
+                    order_status: row.order_status,
+                    order_date: row.order_date,
+                    farmer_name: row.farmer_name,
+                    farmer_mobile: row.farmer_mobile,
+                    farmer_code: row.farmer_code,
+                    requested_items: []
+                };
+            }
+
+            if (row.item_id) {
+                ordersMap[row.request_id].requested_items.push({
+                    item_id: row.item_id,
+                    stock_id: row.stock_id,
+                    species_id: row.species_id,
+                    species_name: row.species_name,
+                    species_name_tamil: row.species_name_tamil,
+                    requested_quantity: row.requested_quantity,
+                    approved_quantity: row.approved_quantity,
+                    item_status: row.item_status
+                });
+            }
+        });
+
+        const results = Object.values(ordersMap);
+
+        console.log("👉 Final Response Count:", results.length);
+
+        res.json({
+            count: results.length,
+            results
+        });
+
+    } catch (err) {
+        console.error("❌ Fetch Orders Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.getTnSchemas = async (req, res) => {
+    try {
+        // Fetch all entries from tn_schema table
+        const [rows] = await db.query(`SELECT id, name FROM tn_schema ORDER BY id ASC`);
+        
+        res.json({ 
+            count: rows.length, 
+            results: rows 
+        });
+    } catch (err) {
+        console.error("Error fetching schemas:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+
+// 1. Update Request Header (Type & Scheme)
+exports.updateRequestHeader = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, type, scheme_id } = req.body;
+
+        await db.query(
+            `UPDATE users_farmerrequest SET status = ?, type = ?, scheme_id = ? WHERE id = ?`,
+            [status, type || 'non-scheme', scheme_id || null, id]
+        );
+        res.json({ message: "Header updated" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// 2. Order Placed / Billing
+exports.orderPlaced = async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        const { request_id, payment_type, total_amount, type, scheme_id } = req.body;
+
+        console.log("Incoming Order:", { request_id, payment_type, total_amount, type, scheme_id });
+
+        // 1. Update request header
+        const [headerResult] = await connection.query(
+            `UPDATE users_farmerrequest 
+             SET status = 'billed', payment_type = ?, total_amount = ?, type = ?, scheme_id = ? 
+             WHERE id = ?`,
+            [payment_type, total_amount, type, scheme_id, request_id]
+        );
+
+        console.log("Header Update Result:", headerResult);
+
+        // 2. Get approved items
+        const [items] = await connection.query(
+            `SELECT stock_id, approved_quantity 
+             FROM users_farmerrequestitem 
+             WHERE request_id = ? AND approved_quantity > 0`,
+            [request_id]
+        );
+
+        console.log("Approved Items:", items);
+
+        // 3. Update stock for each item
+        for (const item of items) {
+            console.log("Processing Item:", item);
+
+            // BEFORE values
+            const [beforeStock] = await connection.query(
+                `SELECT saplings_available, allocated_quantity 
+                 FROM productioncenter_stockdetails 
+                 WHERE id = ?`,
+                [item.stock_id]
+            );
+
+            console.log(`Before Update (stock_id=${item.stock_id}):`, beforeStock);
+
+            // UPDATE
+            const [updateResult] = await connection.query(
+                `UPDATE productioncenter_stockdetails
+                 SET saplings_available = saplings_available - ?,
+                     allocated_quantity = allocated_quantity - ?
+                 WHERE id = ?`,
+                [item.approved_quantity, item.approved_quantity, item.stock_id]
+            );
+
+            console.log(`Update Result (stock_id=${item.stock_id}):`, updateResult);
+
+            // AFTER values
+            const [afterStock] = await connection.query(
+                `SELECT saplings_available, allocated_quantity 
+                 FROM productioncenter_stockdetails 
+                 WHERE id = ?`,
+                [item.stock_id]
+            );
+
+            console.log(`After Update (stock_id=${item.stock_id}):`, afterStock);
+
+            // ⚠️ If no rows updated
+            if (updateResult.affectedRows === 0) {
+                console.log("⚠️ No stock row updated for stock_id:", item.stock_id);
+            }
+
+            // ⚠️ If negative stock happens
+            if (afterStock.length > 0 && afterStock[0].saplings_available < 0) {
+                console.log("❌ Negative saplings_available detected!", afterStock[0]);
+            }
+        }
+
+        await connection.commit();
+        console.log("Transaction committed successfully");
+
+        try {
+    const keys = await redisClient.keys("stock_details_*");
+    if (keys.length > 0) {
+        await redisClient.del(keys);
+        console.log("🧹 Stock cache cleared:", keys);
+    } else {
+        console.log("ℹ️ No cache keys found");
+    }
+} catch (cacheErr) {
+    console.error("Cache clearing error:", cacheErr);
+}
+
+        res.json({ message: "Bill generated successfully and stock updated" });
+
+    } catch (err) {
+        await connection.rollback();
+        console.error("Order Billing Error:", err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        connection.release();
+    }
+};

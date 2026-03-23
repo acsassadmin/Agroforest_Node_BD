@@ -14,10 +14,14 @@ router.get('/roles/', userController.getRoles);
 
 // --- Protected Routes (Authentication Required) ---
 router.post('/farmer-request/', authenticateToken, userController.farmerRequest);
-router.post('/approve-item/', authenticateToken, userController.approveItem);
+router.put('/approve-item/:id', authenticateToken, userController.approveItem);
 router.post('/farmer-aadhar/', authenticateToken, userController.createFarmer);
 router.get('/farmer-aadhar/', authenticateToken, userController.getFarmerAadhar);
+router.get('/farmer-request/', authenticateToken, userController.getCenterOrders);
 
+router.get('/tn-schema/', authenticateToken, userController.getTnSchemas);
+router.put('/request-header/:id', authenticateToken, userController.updateRequestHeader);
+router.post('/order-placed/', authenticateToken, userController.orderPlaced);
 
 // ======================================================================
 

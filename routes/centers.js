@@ -19,6 +19,10 @@ router.post('/production-centers/', authenticateToken, prodController.uploadMidd
 router.put('/production-centers/', authenticateToken, prodController.uploadMiddleware, prodController.updateProductionCenter);
 router.delete('/production-centers/', authenticateToken, prodController.deleteProductionCenter);
 
+// -----------getNearbyProductionCenters ---------------
+router.get('/production-centers-nearby/', authenticateToken, prodController.getNearbyProductionCenters);
+
+
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
 router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);

@@ -215,28 +215,29 @@ exports.createProductionCenter = async (req, res) => {
         const userId = req.user?.id || 1; // ID of logged-in user
 
         // 1️⃣ Insert Production Center
+        // UPDATED: Changed column names to match DB schema (district_id, block_id, village_id, created_by_id)
         const [result] = await connection.query(
             `INSERT INTO productioncenter_productioncenter
             (production_center_type_id, production_type, status, name_of_production_centre,
-             complete_address, district, taluk, block, village, contact_person, mobile_number,
-             latitude, longitude, nursery_capacity, certification_details, created_by)
+             complete_address, district_id, taluk, block_id, village_id, contact_person, mobile_number,
+             latitude, longitude, nursery_capacity, certification_details, created_by_id)
             VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                body.production_center_type,                  // FK to type table
-                body.production_type || 'government',        // default government
+                body.production_center_type_id,            // Maps to production_center_type_id
+                body.production_type || 'government',      // default government
                 body.name_of_production_centre,
                 body.complete_address,
-                body.district,
-                body.taluk,
-                body.block,
-                body.village,
+                body.district_id,                          // Maps to district_id
+                body.taluk || null,                        // Pass null if not provided
+                body.block_id,                             // Maps to block_id
+                body.village_id,                           // Maps to village_id
                 body.contact_person,
                 body.mobile_number,
                 body.latitude,
                 body.longitude,
                 body.nursery_capacity,
                 body.certification_details,
-                userId
+                userId                                     // Maps to created_by_id
             ]
         );
 
@@ -286,38 +287,76 @@ exports.updateProductionCenter = async (req, res) => {
     const connection = await db.getConnection();
     try {
         const { id } = req.query;
-        if (!id) return res.status(400).json({ error: "id is required" });
+        if (!id) return res.status(400).json({ error: "ID is required" });
 
         await connection.beginTransaction();
         const body = req.body;
         const files = req.files;
 
-        await connection.query(
-            `UPDATE productioncenter_productioncenter SET 
-            production_center_type_id = ?, name_of_production_centre = ?, complete_address = ?, 
-            district = ?, taluk = ?, block = ?, village = ?, contact_person = ?, mobile_number = ?, 
-            latitude = ?, longitude = ?, nursery_capacity = ?, certification_details = ?
-            WHERE id = ?`,
-            [
-                body.production_center_type, body.name_of_production_centre, body.complete_address,
-                body.district, body.taluk, body.block, body.village, body.contact_person, body.mobile_number,
-                body.latitude, body.longitude, body.nursery_capacity, body.certification_details, id
-            ]
-        );
+        // 1. Dynamic Query Builder
+        // This allows us to handle both Full Updates (Form) and Partial Updates (Status Change)
+        const updates = [];
+        const values = [];
 
+        // Map frontend keys to database columns
+        const fieldMap = {
+            production_center_type_id: 'production_center_type_id', // Matches frontend payload
+            name_of_production_centre: 'name_of_production_centre',
+            complete_address: 'complete_address',
+            district_id: 'district_id',       // Fixed: was 'district'
+            taluk: 'taluk',
+            block_id: 'block_id',             // Fixed: was 'block'
+            village_id: 'village_id',         // Fixed: was 'village'
+            contact_person: 'contact_person',
+            mobile_number: 'mobile_number',
+            latitude: 'latitude',
+            longitude: 'longitude',
+            nursery_capacity: 'nursery_capacity',
+            certification_details: 'certification_details',
+            status: 'status',                 // For Officer Approval
+            rejected_comment: 'rejected_comment' // For Officer Rejection
+        };
+
+        Object.keys(fieldMap).forEach(key => {
+            // Check if the key exists in the request body
+            if (body[key] !== undefined) {
+                updates.push(`${fieldMap[key]} = ?`);
+                values.push(body[key]);
+            }
+        });
+
+        // Execute Update Query if there are fields to update
+        if (updates.length > 0) {
+            values.push(id); // Add ID for WHERE clause
+            await connection.query(
+                `UPDATE productioncenter_productioncenter SET ${updates.join(', ')} WHERE id = ?`,
+                values
+            );
+        }
+
+        // 2. Handle File Uploads (Only if new files are sent)
         if (files && files.length > 0) {
             const certValues = files.map(file => [id, file.path]);
-            await connection.query('INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?', [certValues]);
+            await connection.query(
+                'INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?', 
+                [certValues]
+            );
         }
 
         await connection.commit();
-        await clearProductionCenterCache(); // Clear Cache
+        
+        // Clear Cache (assuming this function exists)
+        if (typeof clearProductionCenterCache === 'function') {
+            await clearProductionCenterCache();
+        }
 
+        // Return the updated data
         req.query.id = id;
         return exports.getProductionCenters(req, res);
 
     } catch (err) {
         await connection.rollback();
+        console.error("Update Error:", err);
         res.status(400).json({ error: err.message });
     } finally {
         connection.release();
@@ -335,6 +374,97 @@ exports.deleteProductionCenter = async (req, res) => {
         
         res.status(204).send();
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+
+exports.getNearbyProductionCenters = async (req, res) => {
+    try {
+        const { farmer_id } = req.query;
+
+        if (!farmer_id) {
+            return res.status(400).json({ error: "Farmer ID is required" });
+        }
+
+        // 1. Get Farmer Details (Location + Preferred Species)
+        const [farmers] = await db.query(
+            `SELECT village_id, block_id, district_id, species_preferred 
+             FROM users_farmeraathardetails 
+             WHERE farmer_id = ?`, 
+            [farmer_id]
+        );
+
+        if (farmers.length === 0) {
+            return res.status(404).json({ error: "Farmer not found" });
+        }
+
+        const farmer = farmers[0];
+        const { village_id, block_id, district_id, species_preferred } = farmer;
+
+        // 2. Parse Species Preferred (JSON string -> Array)
+        let preferredSpeciesIds = [];
+        try {
+            if (species_preferred) {
+                preferredSpeciesIds = JSON.parse(species_preferred);
+            }
+        } catch (e) {
+            console.error("Error parsing species_preferred JSON", e);
+        }
+
+        // If no species preferred, return empty result immediately
+        if (preferredSpeciesIds.length === 0) {
+            return res.json({ count: 0, results: [] });
+        }
+
+        // 3. Construct Main Query
+        // LOGIC CHANGE:
+        // - JOIN with 'productioncenter_stockdetails' -> This filters OUT centers that don't have the species.
+        // - Use 'DISTINCT' -> To prevent duplicate rows if a center has multiple matching species.
+        // - Proximity Score -> Used for sorting the filtered results.
+        
+        const query = `
+            SELECT DISTINCT
+                pc.*, 
+                pct.name as type_name,
+                d.District_Name as district_name,
+                b.Block_Name as block_name,
+                v.Village_Name as village_name,
+                -- Calculate Location Proximity Score
+                CASE 
+                    WHEN pc.village_id = ? THEN 3 
+                    WHEN pc.block_id = ? THEN 2 
+                    WHEN pc.district_id = ? THEN 1 
+                    ELSE 0 
+                END as proximity_score
+            FROM productioncenter_productioncenter pc
+            JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
+            -- ✅ CRITICAL CHANGE: INNER JOIN filters for centers that HAVE the species
+            JOIN productioncenter_stockdetails sd ON pc.id = sd.production_center_id
+            LEFT JOIN master_district d ON pc.district_id = d.id
+            LEFT JOIN master_block b ON pc.block_id = b.id
+            LEFT JOIN master_village v ON pc.village_id = v.id
+            WHERE pc.status = 'approved' 
+              AND sd.species_id IN (?) -- ✅ Filter by preferred species IDs
+            ORDER BY proximity_score DESC, pc.id DESC
+        `;
+
+        const params = [
+            village_id,
+            block_id,
+            district_id,
+            preferredSpeciesIds // Pass the array of species IDs [15, 17, 18]
+        ];
+
+        const [centers] = await db.query(query, params);
+
+        res.json({ 
+            count: centers.length, 
+            results: centers 
+        });
+
+    } catch (err) {
+        console.error(err);
         res.status(500).json({ error: err.message });
     }
 };
