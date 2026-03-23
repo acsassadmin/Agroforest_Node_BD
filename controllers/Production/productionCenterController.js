@@ -212,32 +212,30 @@ exports.createProductionCenter = async (req, res) => {
 
         const body = req.body;
         const files = req.files;
-        const userId = req.user?.id || 1; // ID of logged-in user
+        const userId = req.user?.id || 1; 
 
         // 1️⃣ Insert Production Center
-        // UPDATED: Changed column names to match DB schema (district_id, block_id, village_id, created_by_id)
         const [result] = await connection.query(
             `INSERT INTO productioncenter_productioncenter
             (production_center_type_id, production_type, status, name_of_production_centre,
-             complete_address, district_id, taluk, block_id, village_id, contact_person, mobile_number,
+             complete_address, district_id, block_id, village_id, contact_person, mobile_number,
              latitude, longitude, nursery_capacity, certification_details, created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
-                body.production_center_type_id,            // Maps to production_center_type_id
-                body.production_type || 'government',      // default government
+                body.production_center_type_id,
+                body.production_type || 'government',
                 body.name_of_production_centre,
                 body.complete_address,
-                body.district_id,                          // Maps to district_id
-                body.taluk || null,                        // Pass null if not provided
-                body.block_id,                             // Maps to block_id
-                body.village_id,                           // Maps to village_id
+                body.district_id,
+                body.block_id,
+                body.village_id,
                 body.contact_person,
                 body.mobile_number,
                 body.latitude,
                 body.longitude,
                 body.nursery_capacity,
                 body.certification_details,
-                userId                                     // Maps to created_by_id
+                userId
             ]
         );
 
@@ -250,7 +248,7 @@ exports.createProductionCenter = async (req, res) => {
             [code, centerId]
         );
 
-        //  Save uploaded certificates (PDF only, max 400KB enforced by multer)
+        //  Save uploaded certificates
         if (files && files.length > 0) {
             const certValues = files.map(file => [centerId, file.path]);
             await connection.query(
@@ -261,14 +259,17 @@ exports.createProductionCenter = async (req, res) => {
 
         //  Auto-generate certificate for private centers
         if (body.production_type === 'private') {
-            // Add your PDF generation logic here
             console.log('Private center: generate certificate PDF');
         }
 
-        //  Commit transaction
+        // Commit transaction
         await connection.commit();
 
-        //  Return response with status = pending
+        // ✅ CLEAR CACHE: Remove stored cache after successful creation
+        if (typeof clearProductionCenterCache === 'function') {
+            await clearProductionCenterCache();
+        }
+
         res.status(201).json({
             id: centerId,
             production_center_code: code,
@@ -277,6 +278,7 @@ exports.createProductionCenter = async (req, res) => {
 
     } catch (err) {
         await connection.rollback();
+        console.error("Create Production Center Error:", err);
         res.status(400).json({ error: err.message });
     } finally {
         connection.release();
