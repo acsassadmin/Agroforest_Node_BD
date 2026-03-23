@@ -22,7 +22,8 @@ router.delete('/production-centers/', authenticateToken, prodController.deletePr
 // -----------getNearbyProductionCenters ---------------
 router.get('/production-centers-nearby/', authenticateToken, prodController.getNearbyProductionCenters);
 
-
+//report
+router.get('/district-summary/', authenticateToken, prodController.getDistrictSummary);
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
 router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);

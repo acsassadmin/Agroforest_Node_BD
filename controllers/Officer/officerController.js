@@ -73,8 +73,8 @@ exports.createOfficer = async (req, res) => {
             department,
             designation,
             role,
-            username,  // this is the new username to create in users_customuser
-            password   // password for the user
+            username,  
+            password  
         } = req.body;
 
         if (!username || !password) {
