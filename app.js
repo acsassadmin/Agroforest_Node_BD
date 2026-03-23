@@ -43,5 +43,5 @@ app.use('/master', masterRoutes);
 
 // Start the server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on http://192.168.1.126:${PORT}`);
+  console.log(`Server is running on http://192.168.1.203:${PORT}`);
 });
