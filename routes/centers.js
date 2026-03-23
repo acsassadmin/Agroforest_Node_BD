@@ -22,7 +22,8 @@ router.delete('/production-centers/', authenticateToken, prodController.deletePr
 // -----------getNearbyProductionCenters ---------------
 router.get('/production-centers-nearby/', authenticateToken, prodController.getNearbyProductionCenters);
 
-
+//report
+router.get('/district-summary/', authenticateToken, prodController.getDistrictSummary);
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
 router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);
@@ -51,5 +52,6 @@ router.put('/stock-requests/', authenticateToken, stockController.handleStockReq
 // Excel & Dashboard
 router.get('/production-centers/excel/', authenticateToken, stockController.downloadExcel);
 router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
+
 
 module.exports = router;
