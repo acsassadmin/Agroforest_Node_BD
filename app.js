@@ -19,13 +19,7 @@ const reportRoutes = require("./routes/report");
 const targetDepartmentRoutes = require('./routes/targetdepartment');
 const targetDistrictRoutes = require('./routes/targetdistrict');
 const targetBlockRoutes = require('./routes/targetblock');
-
-
-
 const masterRoutes = require("./routes/master");
-
-
-
 
 app.use('/users', userRoutes);
 app.use('/center', centerRoutes);
@@ -35,10 +29,7 @@ app.use('/report', reportRoutes);
 app.use('/targetdepartment', targetDepartmentRoutes);
 app.use('/targetdistrict', targetDistrictRoutes);
 app.use('/targetblock', targetBlockRoutes);
-
 app.use('/master', masterRoutes);
-
-
 
 
 // Start the server
