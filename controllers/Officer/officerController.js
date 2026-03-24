@@ -283,7 +283,9 @@ exports.registerOfficer = async (req, res) => {
             designation,
             role,          // This is coming as "3" (ID) from frontend
             username,
-            password
+            password,
+            district_id ,
+            block_id
         } = req.body;
 
         // 1. Validation
@@ -341,20 +343,22 @@ exports.registerOfficer = async (req, res) => {
 
         // 6. Insert into officer_details
         const insertOfficerQuery = `
-            INSERT INTO officer_details
-            (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-            
-        await connection.query(insertOfficerQuery, [
-            officername,
-            gender,
-            mobile,
-            email,
-            department,
-            designation,
-            roleId,  // Storing the ID (e.g., 3)
-            userId 
-        ]);
+    INSERT INTO officer_details
+    (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    
+await connection.query(insertOfficerQuery, [
+    officername,
+    gender,
+    mobile,
+    email,
+    department,
+    designation,
+    roleId, 
+    userId,
+    district_id, // From req.body
+    block_id     // From req.body
+]);
 
         await connection.commit();
 
