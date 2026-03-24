@@ -498,8 +498,8 @@ exports.getDistrictSummary = async (req, res) => {
             const [centers] = await db.query(`
                 SELECT id 
                 FROM productioncenter_productioncenter 
-                WHERE district = ? AND status = 'approved'
-            `, [district.District_Name]); 
+                WHERE district_id = ? AND status = 'approved'
+            `, [district.id]); 
 
             const productionCenterCount = centers.length;
             const centerIds = centers.map(c => c.id);
@@ -518,14 +518,14 @@ exports.getDistrictSummary = async (req, res) => {
             if (centerIds.length > 0) {
 
                 const [saplings] = await db.query(`
-                    SELECT species_name, 
-                           SUM(saplings_available) AS total_quantity,
-                           SUM(saplings_available * price_per_sapling) AS sales
-                    FROM productioncenter_stockdetails
-                    WHERE production_center_id IN (?)
-                    GROUP BY species_name
-                `, [centerIds]);
-
+  SELECT t.name AS species_name,
+         SUM(s.saplings_available) AS total_quantity,
+         SUM(s.saplings_available * s.price_per_sapling) AS sales
+  FROM productioncenter_stockdetails s
+  JOIN tbl_agroforest_trees t ON s.species_id = t.id
+  WHERE s.production_center_id IN (?)
+  GROUP BY t.name
+`, [centerIds]);
                 // ✅ FIXED MATCHING: Case-insensitive and trim whitespace
                 saplingsPerDistrict.forEach(s => {
                     const match = saplings.find(sp => 

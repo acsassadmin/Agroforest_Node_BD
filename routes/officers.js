@@ -10,7 +10,9 @@ router.delete('/officer/:id', officerController.deleteOfficer);
 router.get('/departments', officerController.getDepartments);
 router.post("/departments", officerController.createDepartment);
 router.post("/designations", officerController.createDesignation);
-router.get('/designations', officerController.getDesignations); 
+router.put("/designations", officerController.updateDesignation);
+router.delete("/designations", officerController.deleteDesignation);
+router.delete("/designations/:id", officerController.deleteDesignation);
 router.get('/usernames', officerController.getUsernames); 
 
 module.exports = router;
