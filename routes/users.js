@@ -26,4 +26,8 @@ router.post('/order-placed/', authenticateToken, userController.orderPlaced);
 
 // ======================================================================
 
+router.get('/dashboard/top-centers', authenticateToken, userController.getTopProductionCenters);
+router.get('/dashboard/district-saplings', authenticateToken, userController.getSaplingsDistrictWise);
+// Map Data
+router.get('/production-centers/map', authenticateToken, userController.getProductionCentersForMap);
 module.exports = router;
