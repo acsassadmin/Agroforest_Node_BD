@@ -96,6 +96,7 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     // 1. Query with JOINs to get Role Name, Production Center ID, and Status
+    // This query runs directly against the DB every time. No cache here.
     const query = `
       SELECT 
         u.id, 
@@ -129,7 +130,9 @@ exports.login = async (req, res) => {
     const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
 
-    // 3. Generate Access Token (Short lived: e.g., 15 mins)
+    // 3. Generate Access Token
+    // ⚠️ IMPORTANT: This token holds the role. If you change the role in DB,
+    // this token must be regenerated (User must Logout & Login).
     const accessToken = jwt.sign(
       { id: user.id, role: user.role_name },
       JWT_SECRET,
@@ -150,7 +153,7 @@ exports.login = async (req, res) => {
       role: user.role_name,             
       user_name: user.username,
       production_center_id: user.production_center_id || null,
-      production_center_status: user.production_center_status || null // Added Status
+      production_center_status: user.production_center_status || null
     });
 
   } catch (err) {
@@ -163,7 +166,6 @@ exports.login = async (req, res) => {
 exports.refreshToken = async (req, res) => {
     res.status(501).json({ message: "Refresh token logic not implemented yet" });
 };
-
 
 // ===================== ROLE =====================
 
