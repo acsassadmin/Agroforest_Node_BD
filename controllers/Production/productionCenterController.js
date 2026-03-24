@@ -219,8 +219,8 @@ exports.createProductionCenter = async (req, res) => {
             `INSERT INTO productioncenter_productioncenter
             (production_center_type_id, production_type, status, name_of_production_centre,
              complete_address, district_id, block_id, village_id, contact_person, mobile_number,
-             latitude, longitude, nursery_capacity, certification_details, created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+             latitude, longitude, nursery_capacity, certification_details, nursery_category , created_by_id)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
                 body.production_center_type_id,
                 body.production_type || 'government',
@@ -235,6 +235,7 @@ exports.createProductionCenter = async (req, res) => {
                 body.longitude,
                 body.nursery_capacity,
                 body.certification_details,
+                body.nursery_category ,
                 userId
             ]
         );
@@ -316,7 +317,8 @@ exports.updateProductionCenter = async (req, res) => {
             nursery_capacity: 'nursery_capacity',
             certification_details: 'certification_details',
             status: 'status',                 // For Officer Approval
-            rejected_comment: 'rejected_comment' // For Officer Rejection
+            rejected_comment: 'rejected_comment', // For Officer Rejection
+            nursery_category: 'nursery_category'
         };
 
         Object.keys(fieldMap).forEach(key => {
@@ -467,6 +469,109 @@ exports.getNearbyProductionCenters = async (req, res) => {
 
     } catch (err) {
         console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+
+exports.getDistrictSummary = async (req, res) => {
+    try {
+        const [districts] = await db.query(`
+            SELECT id, District_Name 
+            FROM master_district 
+            ORDER BY District_Name ASC
+        `);
+
+        const [speciesList] = await db.query(`
+            SELECT id, name AS species_name 
+            FROM tbl_agroforest_trees 
+            ORDER BY id ASC
+        `);
+
+        const districtSummaries = [];
+
+        for (const district of districts) {
+
+            // ❌ OLD: WHERE district = ? ... [district.id]
+            // ✅ FIXED: Assuming the production center table stores the NAME, not the ID.
+            // If your DB stores IDs, change this back to district.id.
+            const [centers] = await db.query(`
+                SELECT id 
+                FROM productioncenter_productioncenter 
+                WHERE district = ? AND status = 'approved'
+            `, [district.District_Name]); 
+
+            const productionCenterCount = centers.length;
+            const centerIds = centers.map(c => c.id);
+
+            // Initialize default structure
+            const saplingsPerDistrict = speciesList.map(s => ({
+                species_id: s.id,
+                species_name: s.species_name,
+                total_quantity: 0
+            }));
+
+            let totalSaplings = 0;
+            let totalSales = 0;
+            let totalTarget = 0;
+
+            if (centerIds.length > 0) {
+
+                const [saplings] = await db.query(`
+                    SELECT species_name, 
+                           SUM(saplings_available) AS total_quantity,
+                           SUM(saplings_available * price_per_sapling) AS sales
+                    FROM productioncenter_stockdetails
+                    WHERE production_center_id IN (?)
+                    GROUP BY species_name
+                `, [centerIds]);
+
+                // ✅ FIXED MATCHING: Case-insensitive and trim whitespace
+                saplingsPerDistrict.forEach(s => {
+                    const match = saplings.find(sp => 
+                        sp.species_name && 
+                        s.species_name && 
+                        sp.species_name.toLowerCase().trim() === s.species_name.toLowerCase().trim()
+                    );
+                    
+                    if (match) {
+                        // Ensure values are Numbers
+                        const qty = Number(match.total_quantity) || 0;
+                        const sale = Number(match.sales) || 0;
+
+                        s.total_quantity = qty;
+                        totalSaplings += qty;
+                        totalSales += sale;
+                    }
+                });
+
+                const [targets] = await db.query(`
+                    SELECT SUM(target_quantity) AS total_target
+                    FROM target_productioncenter
+                    WHERE productioncenter_id IN (?)
+                `, [centerIds]);
+
+                totalTarget = targets[0].total_target || 0;
+            }
+
+            districtSummaries.push({
+                district_id: district.id,
+                district_name: district.District_Name,
+                production_center_count: productionCenterCount,
+                saplings: saplingsPerDistrict,
+                total_saplings: totalSaplings,
+                total_sales: totalSales,
+                total_target: totalTarget
+            });
+        }
+
+        res.json({
+            count: districtSummaries.length,
+            districts: districtSummaries
+        });
+
+    } catch (err) {
+        console.error("District Summary Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

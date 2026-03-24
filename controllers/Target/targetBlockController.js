@@ -9,9 +9,22 @@ exports.createTargetBlock = async (req, res) => {
             return res.status(400).json({ message: "All fields are required" });
         }
 
+        // Check if target_department_id exists
+        const [dept] = await db.query(`SELECT id FROM target_department WHERE id = ?`, [target_department_id]);
+        if (dept.length === 0) {
+            return res.status(400).json({ message: "Invalid target_department_id" });
+        }
+
+        // Check if district_id exists
+        const [district] = await db.query(`SELECT id FROM master_block WHERE id = ?`, [district_id]);
+        if (district.length === 0) {
+            return res.status(400).json({ message: "Invalid district_id" });
+        }
+
+        // Check for existing target in date range
         const [existing] = await db.query(
             `SELECT * FROM target_block 
-             WHERE target_department_id = ? AND district_id = ?
+             WHERE target_department_id = ? AND district_id = ? 
              AND ((? BETWEEN start_date AND end_date) OR (? BETWEEN start_date AND end_date))`,
             [target_department_id, district_id, start_date, end_date]
         );
@@ -39,11 +52,11 @@ exports.createTargetBlock = async (req, res) => {
 exports.getAllTargetBlocks = async (req, res) => {
     try {
         const [rows] = await db.query(
-            `SELECT tb.*, td.id AS department_id, td.role_id, td.target_tag, 
-                    md.id AS district_id, md.District_Name AS district_name
+            `SELECT tb.*, td.id AS department_id, td.role_id, td.target_tag,
+                    mb.id AS block_id, mb.Block_Name AS block_name
              FROM target_block tb
              JOIN target_department td ON tb.target_department_id = td.id
-             JOIN master_district md ON tb.district_id = md.id`
+             JOIN master_block mb ON tb.district_id = mb.id`
         );
 
         res.status(200).json(rows);
@@ -71,6 +84,13 @@ exports.updateTargetBlock = async (req, res) => {
     try {
         const { id } = req.params;
         const { target_department_id, district_id, target_quantity, start_date, end_date } = req.body;
+
+        // Check valid foreign keys
+        const [dept] = await db.query(`SELECT id FROM target_department WHERE id = ?`, [target_department_id]);
+        if (dept.length === 0) return res.status(400).json({ message: "Invalid target_department_id" });
+
+        const [district] = await db.query(`SELECT id FROM master_block WHERE id = ?`, [district_id]);
+        if (district.length === 0) return res.status(400).json({ message: "Invalid district_id" });
 
         await db.query(
             `UPDATE target_block 
@@ -109,12 +129,12 @@ exports.getTargetDepartments = async (req, res) => {
     }
 };
 
-exports.getDistricts = async (req, res) => {
+exports.getBlocks = async (req, res) => {
     try {
-        const [rows] = await db.query(`SELECT id, District_Name AS name FROM master_district`);
+        const [rows] = await db.query(`SELECT id, Block_Name AS name FROM master_block`);
         res.status(200).json(rows);
     } catch (err) {
-        console.error("Get Districts Error:", err);
+        console.error("Get Blocks Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

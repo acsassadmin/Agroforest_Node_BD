@@ -1,14 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const officerController = require('../controllers/Officer/officerController');  // Correct path
-// Officer Routes (Already Defined)
-router.get('/', officerController.getOfficers); 
-router.get('/:id', officerController.getOfficerById); 
-router.post('/', officerController.createOfficer); 
-router.put('/:id', officerController.updateOfficer); 
-router.delete('/:id', officerController.deleteOfficer); 
+router.get('/officer/', officerController.getOfficers); 
+router.get('/officer/:id', officerController.getOfficerById);
+router.post('/register-officer', officerController.registerOfficer);
+router.put('/officer/:id', officerController.updateOfficer); 
+router.delete('/officer/:id', officerController.deleteOfficer); 
 
-// GET Routes for Department, Designation, Username
 router.get('/departments', officerController.getDepartments);
 router.post("/departments", officerController.createDepartment);
 router.post("/designations", officerController.createDesignation);

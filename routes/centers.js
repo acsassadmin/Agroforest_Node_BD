@@ -5,8 +5,6 @@ const distController = require('../controllers/Production/distributionCenterCont
 const stockController = require('../controllers/Production/stockController');
 const authenticateToken = require('../middleware/authMiddleware'); 
 
-
-
 // --- Types Routes ---
 router.get('/production-center-types/', authenticateToken, prodController.getProductionCenterTypes);
 router.post('/production-center-types/', authenticateToken, prodController.createProductionCenterType);
@@ -22,7 +20,8 @@ router.delete('/production-centers/', authenticateToken, prodController.deletePr
 // -----------getNearbyProductionCenters ---------------
 router.get('/production-centers-nearby/', authenticateToken, prodController.getNearbyProductionCenters);
 
-
+//report
+router.get('/district-summary/', authenticateToken, prodController.getDistrictSummary);
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
 router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);
@@ -51,5 +50,14 @@ router.put('/stock-requests/', authenticateToken, stockController.handleStockReq
 // Excel & Dashboard
 router.get('/production-centers/excel/', authenticateToken, stockController.downloadExcel);
 router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
+
+
+// GET ALL (uses same function as below)
+router.get('/schema/', authenticateToken, stockController.getScheme);
+router.get('/schema/:id', authenticateToken, stockController.getScheme);
+router.post('/schema/', authenticateToken, stockController.createScheme);
+router.put('/schema/:id', authenticateToken, stockController.updateScheme);
+router.delete('/schema/:id', authenticateToken, stockController.deleteScheme);
+
 
 module.exports = router;

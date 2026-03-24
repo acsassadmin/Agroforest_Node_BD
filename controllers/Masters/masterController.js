@@ -3,11 +3,22 @@ const db = require("../../db");
 // 1. Get Blocks
 exports.getBlocks = async (req, res) => {
   try {
-    // Selecting ID is recommended for frontend dropdowns
-    const query = `SELECT id, Block_Name FROM master_block`;
-    
-    const [rows] = await db.query(query);
-    
+    const { district_id } = req.query;
+
+    let query = `SELECT id, Block_Name FROM master_block`;
+    let params = [];
+
+    // ✅ Filter by district_id if provided
+    if (district_id) {
+      query += ` WHERE District_Id = ?`;
+      params.push(district_id);
+    }
+
+    // ✅ Sort by Block_Name
+    query += ` ORDER BY Block_Name ASC`;
+
+    const [rows] = await db.query(query, params);
+
     res.status(200).json(rows);
   } catch (err) {
     console.error("Error fetching blocks:", err);
@@ -18,10 +29,22 @@ exports.getBlocks = async (req, res) => {
 // 2. Get Villages
 exports.getVillages = async (req, res) => {
   try {
-    const query = `SELECT id, Village_Name FROM master_village`;
-    
-    const [rows] = await db.query(query);
-    
+    const { block_id } = req.query;
+
+    let query = `SELECT id, Village_Name FROM master_village`;
+    let params = [];
+
+    // ✅ Filter by block_id if provided
+    if (block_id) {
+      query += ` WHERE Block_Id = ?`;
+      params.push(block_id);
+    }
+
+    // ✅ Sort by Village_Name
+    query += ` ORDER BY Village_Name ASC`;
+
+    const [rows] = await db.query(query, params);
+
     res.status(200).json(rows);
   } catch (err) {
     console.error("Error fetching villages:", err);
