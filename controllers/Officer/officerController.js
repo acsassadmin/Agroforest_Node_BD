@@ -205,7 +205,64 @@ exports.createDepartment = async (req, res) => {
         });
     }
 };
+// UPDATE department
+exports.updateDepartment = async (req, res) => {
+  try {
+    // Get department ID from query parameter
+    const { id } = req.query;
+    const { name } = req.body;
 
+    if (!id) {
+      return res.status(400).json({ message: "Department ID is required in query parameter" });
+    }
+    if (!name) {
+      return res.status(400).json({ message: "New department name is required in request body" });
+    }
+
+    const [result] = await db.query(
+      "UPDATE department SET name = ? WHERE id = ?",
+      [name, id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Department not found" });
+    }
+
+    res.json({
+      message: "Department updated successfully",
+      id,
+      name
+    });
+  } catch (err) {
+    console.error("Update Department Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// DELETE department
+exports.deleteDepartment = async (req, res) => {
+  try {
+    const { id } = req.query;
+
+    if (!id) {
+      return res.status(400).json({ message: "Department ID is required in query parameter" });
+    }
+
+    const [result] = await db.query(
+      "DELETE FROM department WHERE id = ?",
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Department not found" });
+    }
+
+    res.json({ message: "Department deleted successfully", id });
+  } catch (err) {
+    console.error("Delete Department Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
 
 // ===================== DESIGNATIONS =====================
 
