@@ -26,9 +26,6 @@ const targetProductionCenterRoutes = require('./routes/targetproductioncenter');
 
 const masterRoutes = require("./routes/master");
 
-
-
-
 app.use('/users', userRoutes);
 app.use('/center', centerRoutes);
 app.use('/officers', officerRoutes);
@@ -41,8 +38,6 @@ app.use('/targetproductioncenter', targetProductionCenterRoutes);
 
 
 app.use('/master', masterRoutes);
-
-
 
 
 // Start the server
