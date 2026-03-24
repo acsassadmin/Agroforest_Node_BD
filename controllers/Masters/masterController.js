@@ -10,7 +10,7 @@ exports.getBlocks = async (req, res) => {
 
     // ✅ Filter by district_id if provided
     if (district_id) {
-      query += ` WHERE District_Id = ?`;
+      query += ` WHERE Dist_Name = ?`;
       params.push(district_id);
     }
 
