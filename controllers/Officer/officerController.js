@@ -325,22 +325,30 @@ exports.registerOfficer = async (req, res) => {
             }
         }
 
+        let genderValue = 0; 
+        if (gender === 'Male') {
+            genderValue = 1;
+        } else if (gender === 'Female') {
+            genderValue = 0;
+        }
         // 5. Insert into users_customuser
         const insertUserQuery = `
             INSERT INTO users_customuser 
-            (username, password, email, role_id, is_active) 
-            VALUES (?, ?, ?, ?, ?)`;
+            (username, password, email, role_id, is_active ,date_joined) 
+            VALUES (?, ?, ?, ?, ?, ?)`;
         
         const [userResult] = await connection.query(insertUserQuery, [
             username, 
             hashedPassword, 
             email, 
             roleId, 
-            true
+            true,
+            new Date()
         ]);
 
         const userId = userResult.insertId;
 
+        
         // 6. Insert into officer_details
         const insertOfficerQuery = `
     INSERT INTO officer_details
@@ -349,7 +357,7 @@ exports.registerOfficer = async (req, res) => {
     
 await connection.query(insertOfficerQuery, [
     officername,
-    gender,
+    genderValue, 
     mobile,
     email,
     department,
@@ -357,7 +365,8 @@ await connection.query(insertOfficerQuery, [
     roleId, 
     userId,
     district_id, // From req.body
-    block_id     // From req.body
+    block_id,     // From req.body
+   
 ]);
 
         await connection.commit();
