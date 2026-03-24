@@ -273,69 +273,56 @@ exports.registerOfficer = async (req, res) => {
     const connection = await db.getConnection(); 
     try {
         await connection.beginTransaction();
+        console.log("--- Transaction Started ---");
 
         const {
-            officername,
-            gender,
-            mobile,
-            email,
-            department,
-            designation,
-            role,          // This is coming as "3" (ID) from frontend
-            username,
-            password,
-            district_id ,
-            block_id
+            officername, gender, mobile, email, department, designation,
+            role, username, password, district_id, block_id
         } = req.body;
 
         // 1. Validation
-        if (!username || !password || !email || !officername) {
+        // Added 'department' check since you are saving it now
+        if (!username || !password || !email || !officername ) {
             await connection.rollback();
-            return res.status(400).json({ message: "Username, Password, Email, and Officer Name are required" });
+            return res.status(400).json({ message: "Username, Password, Email, Officer Name, and Department are required" });
         }
 
-        // 2. Check if user already exists
+        // 2. Check existing user
         const [existingUser] = await connection.query(
             'SELECT id FROM users_customuser WHERE email = ? OR username = ?',
             [email, username]
         );
-
         if (existingUser.length > 0) {
             await connection.rollback();
-            return res.status(400).json({ message: "Username or Email already exists" });
+            return res.status(400).json({ message: "User already exists" });
         }
 
-        // 3. Hash the password
+        // 3. Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 4. Find Role ID from users_role table
-        // ✅ FIX: Check if the input is an ID or a Name
+        // 4. Find Role ID
         let roleId = null;
         if (role) {
             const [roleRows] = await connection.query(
                 'SELECT id FROM users_role WHERE id = ? OR name = ?',
-                [role, role] // Checks both columns
+                [role, role]
             );
-            
             if (roleRows.length > 0) {
                 roleId = roleRows[0].id; 
             } else {
                 await connection.rollback();
-                return res.status(400).json({ message: `Role '${role}' not found in database.` });
+                return res.status(400).json({ message: `Role not found` });
             }
         }
 
-        let genderValue = 0; 
-        if (gender === 'Male') {
-            genderValue = 1;
-        } else if (gender === 'Female') {
-            genderValue = 0;
-        }
-        // 5. Insert into users_customuser
+        let genderValue = gender === 'Male' ? 1 : 0;
+
+        // --- UPDATED INSERT QUERY ---
+        // Added department_id, district_id, block_id
         const insertUserQuery = `
             INSERT INTO users_customuser 
-            (username, password, email, role_id, is_active ,date_joined) 
-            VALUES (?, ?, ?, ?, ?, ?)`;
+            (username, password, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         
         const [userResult] = await connection.query(insertUserQuery, [
             username, 
@@ -343,47 +330,46 @@ exports.registerOfficer = async (req, res) => {
             email, 
             roleId, 
             true,
-            new Date()
+            new Date(),
+            false,
+            username,
+            null,
+            department,     // <--- Matches department_id
+            district_id,    // <--- Matches district_id
+            block_id        // <--- Matches block_id
         ]);
 
+        console.log("Insert 1 SUCCESS. New User ID:", userResult.insertId);
         const userId = userResult.insertId;
 
-        
-        // 6. Insert into officer_details
+        // 6. Insert into officer_details (Logic remains the same)
         const insertOfficerQuery = `
-    INSERT INTO officer_details
-    (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-    
-await connection.query(insertOfficerQuery, [
-    officername,
-    genderValue, 
-    mobile,
-    email,
-    department,
-    designation,
-    roleId, 
-    userId,
-    district_id, // From req.body
-    block_id,     // From req.body
-   
-]);
+            INSERT INTO officer_details
+            (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        
+        await connection.query(insertOfficerQuery, [
+            officername, genderValue, mobile, email, department, designation,
+            roleId, userId, district_id, block_id
+        ]);
+        
+        console.log("Insert 2 SUCCESS.");
 
         await connection.commit();
+        console.log("--- Transaction Committed Successfully ---");
 
-        res.status(201).json({ 
-            message: "Officer registered successfully", 
-            user_id: userId 
-        });
+        res.status(201).json({ message: "Officer registered", user_id: userId });
 
     } catch (err) {
         await connection.rollback();
-        console.error("Register Officer Error:", err);
+        console.error("!!! ERROR CAUGHT !!! Rolling back transaction.", err);
         res.status(500).json({ error: err.message });
     } finally {
         connection.release();
     }
 };
+
+
 // // Update officer details
 // exports.updateOfficer = async (req, res) => {
 //     try {
