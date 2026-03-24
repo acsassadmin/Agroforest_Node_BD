@@ -267,15 +267,22 @@ exports.deleteDepartment = async (req, res) => {
 // ===================== DESIGNATIONS =====================
 
 // GET all designations
-exports.getDesignations = async (req, res) => {
+exports.getDesignation = async (req, res) => {
     try {
         const [rows] = await db.query(
             "SELECT id, name FROM designation ORDER BY id DESC"
         );
-        res.json(rows);
+
+        res.status(200).json({
+            success: true,
+            count: rows.length,
+            data: rows
+        });
+
     } catch (err) {
         console.error("Get Designations Error:", err);
         res.status(500).json({
+            success: false,
             error: err.message
         });
     }
@@ -284,9 +291,7 @@ exports.getDesignations = async (req, res) => {
 // CREATE designation
 exports.createDesignation = async (req, res) => {
     try {
-        const {
-            name
-        } = req.body;
+        const { name } = req.body || {};
 
         if (!name) {
             return res.status(400).json({
