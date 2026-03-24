@@ -783,23 +783,31 @@ exports.orderPlaced = async (req, res) => {
 
         console.log("Header Update Result:", headerResult);
 
-        // 2. Get approved items
+        // 2. Get approved items WITH their price
+        // Joining with productioncenter_stockdetails to get the current price_per_sapling
         const [items] = await connection.query(
-            `SELECT stock_id, approved_quantity 
-             FROM users_farmerrequestitem 
-             WHERE request_id = ? AND approved_quantity > 0`,
+            `SELECT 
+                fri.stock_id, 
+                fri.approved_quantity,
+                ps.price_per_sapling 
+             FROM users_farmerrequestitem fri
+             JOIN productioncenter_stockdetails ps ON fri.stock_id = ps.id
+             WHERE fri.request_id = ? AND fri.approved_quantity > 0`,
             [request_id]
         );
 
-        console.log("Approved Items:", items);
+        console.log("Approved Items with Price:", items);
 
         // 3. Update stock for each item
         for (const item of items) {
             console.log("Processing Item:", item);
 
+            // Calculate the total price for this specific item row
+            const itemTotalPrice = item.approved_quantity * (item.price_per_sapling || 0);
+
             // BEFORE values
             const [beforeStock] = await connection.query(
-                `SELECT saplings_available, allocated_quantity 
+                `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
                  FROM productioncenter_stockdetails 
                  WHERE id = ?`,
                 [item.stock_id]
@@ -807,20 +815,29 @@ exports.orderPlaced = async (req, res) => {
 
             console.log(`Before Update (stock_id=${item.stock_id}):`, beforeStock);
 
-            // UPDATE
+            // UPDATE: Decrement stock, Increment Sales Count and Sales Amount
             const [updateResult] = await connection.query(
                 `UPDATE productioncenter_stockdetails
-                 SET saplings_available = saplings_available - ?,
-                     allocated_quantity = allocated_quantity - ?
+                 SET 
+                    saplings_available = saplings_available - ?,
+                    allocated_quantity = allocated_quantity - ?,
+                    total_selled = total_selled + ?,
+                    total_selled_price = total_selled_price + ?
                  WHERE id = ?`,
-                [item.approved_quantity, item.approved_quantity, item.stock_id]
+                [
+                    item.approved_quantity,     // Decrease available
+                    item.approved_quantity,     // Decrease allocated
+                    item.approved_quantity,     // Increase total_selled count
+                    itemTotalPrice,             // Increase total_selled_price
+                    item.stock_id
+                ]
             );
 
             console.log(`Update Result (stock_id=${item.stock_id}):`, updateResult);
 
             // AFTER values
             const [afterStock] = await connection.query(
-                `SELECT saplings_available, allocated_quantity 
+                `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
                  FROM productioncenter_stockdetails 
                  WHERE id = ?`,
                 [item.stock_id]
@@ -828,12 +845,10 @@ exports.orderPlaced = async (req, res) => {
 
             console.log(`After Update (stock_id=${item.stock_id}):`, afterStock);
 
-            // ⚠️ If no rows updated
             if (updateResult.affectedRows === 0) {
                 console.log("⚠️ No stock row updated for stock_id:", item.stock_id);
             }
 
-            // ⚠️ If negative stock happens
             if (afterStock.length > 0 && afterStock[0].saplings_available < 0) {
                 console.log("❌ Negative saplings_available detected!", afterStock[0]);
             }
@@ -842,17 +857,18 @@ exports.orderPlaced = async (req, res) => {
         await connection.commit();
         console.log("Transaction committed successfully");
 
+        // Clear Cache
         try {
-    const keys = await redisClient.keys("stock_details_*");
-    if (keys.length > 0) {
-        await redisClient.del(keys);
-        console.log("🧹 Stock cache cleared:", keys);
-    } else {
-        console.log("ℹ️ No cache keys found");
-    }
-} catch (cacheErr) {
-    console.error("Cache clearing error:", cacheErr);
-}
+            const keys = await redisClient.keys("stock_details_*");
+            if (keys.length > 0) {
+                await redisClient.del(keys);
+                console.log("🧹 Stock cache cleared:", keys);
+            } else {
+                console.log("ℹ️ No cache keys found");
+            }
+        } catch (cacheErr) {
+            console.error("Cache clearing error:", cacheErr);
+        }
 
         res.json({ message: "Bill generated successfully and stock updated" });
 
@@ -981,3 +997,41 @@ exports.getProductionCentersForMap = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+exports.getFarmerRequestItemByStockId = async (req, res) => {
+  try {
+    const { stock_id } = req.query;
+    if (!stock_id) {
+      return res.status(400).json({
+        message: "stock_id is required in query parameters",
+      });
+    }
+
+    const [items] = await db.query(
+      `
+        SELECT 
+          fri.*,
+          fr.farmer_id,
+          aft.name AS species_name
+        FROM users_farmerrequestitem fri
+        INNER JOIN users_farmerrequest fr ON fri.request_id = fr.id
+        INNER JOIN tbl_agroforest_trees aft ON fri.species_id = aft.id
+        WHERE fri.stock_id = ? AND fri.status = 'approved'
+      `,
+      [stock_id]
+    );
+
+    if (!items.length) {
+      return res.status(404).json({
+        message: "No approved request items found for this stock_id",
+      });
+    }
+
+    res.json(items);
+  } catch (err) {
+    console.error("Get Farmer Request Item Error:", err);
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+};
+

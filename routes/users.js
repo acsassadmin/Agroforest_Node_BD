@@ -23,7 +23,7 @@ router.put('/farmer-aadhar/:id', userController.updateFarmer);
 router.get('/tn-schema/', authenticateToken, userController.getTnSchemas);
 router.put('/request-header/:id', authenticateToken, userController.updateRequestHeader);
 router.post('/order-placed/', authenticateToken, userController.orderPlaced);
-
+router.get('/farmer-request-items/', userController.getFarmerRequestItemByStockId);
 // ======================================================================
 
 router.get('/dashboard/top-centers', authenticateToken, userController.getTopProductionCenters);
