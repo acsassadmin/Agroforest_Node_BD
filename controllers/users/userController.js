@@ -864,3 +864,120 @@ exports.orderPlaced = async (req, res) => {
         connection.release();
     }
 };
+
+// DASHBOARD API GET CALL 
+
+
+exports.getTopProductionCenters = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                pc.id as production_center_id,
+                pc.name_of_production_centre,
+                pc.contact_person,
+                pc.mobile_number,
+                d.District_Name,
+                COUNT(fr.id) as total_requests
+            FROM users_farmerrequest fr
+            JOIN productioncenter_productioncenter pc ON fr.production_center_id = pc.id
+            LEFT JOIN master_district d ON pc.district_id = d.id
+            GROUP BY fr.production_center_id
+            ORDER BY total_requests DESC
+            LIMIT 10;
+        `;
+
+        const [results] = await db.query(query);
+        res.json(results);
+
+    } catch (err) {
+        console.error("Top Production Centers Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// 2. Saplings Available District Wise
+exports.getSaplingsDistrictWise = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                d.id as district_id,
+                d.District_Name,
+                COUNT(DISTINCT pc.id) as total_production_centers,
+                SUM(sd.saplings_available) as total_saplings_available,
+                SUM(sd.allocated_quantity) as total_allocated_quantity
+            FROM productioncenter_stockdetails sd
+            JOIN productioncenter_productioncenter pc ON sd.production_center_id = pc.id
+            RIGHT JOIN master_district d ON pc.district_id = d.id
+            GROUP BY d.id
+            ORDER BY d.District_Name ASC;
+        `;
+
+        const [results] = await db.query(query);
+        res.json(results);
+
+    } catch (err) {
+        console.error("District Wise Saplings Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// ===================== MAP DATA =====================
+
+// Get all active production centers with location and stock
+exports.getProductionCentersForMap = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                pc.id,
+                pc.name_of_production_centre,
+                pc.contact_person,
+                pc.mobile_number,
+                pc.complete_address,
+                pc.latitude,
+                pc.longitude,
+                pc.production_type,
+                pc.status,
+                
+                -- Location Names
+                d.District_Name,
+                b.Block_Name,
+                v.Village_Name,
+
+                -- Aggregated Stock Data
+                COUNT(sd.id) as total_stock_entries,
+                COALESCE(SUM(sd.saplings_available), 0) as total_saplings_available,
+                COALESCE(SUM(sd.allocated_quantity), 0) as total_allocated_quantity
+
+            FROM productioncenter_productioncenter pc
+            
+            -- Join Location Tables
+            LEFT JOIN master_district d ON pc.district_id = d.id
+            LEFT JOIN master_block b ON pc.block_id = b.id
+            LEFT JOIN master_village v ON pc.village_id = v.id
+            
+            -- Join Stock Table (to calculate totals)
+            LEFT JOIN productioncenter_stockdetails sd ON sd.production_center_id = pc.id
+
+            WHERE pc.latitude IS NOT NULL AND pc.longitude IS NOT NULL
+            GROUP BY pc.id
+            ORDER BY pc.name_of_production_centre ASC
+        `;
+
+        const [results] = await db.query(query);
+
+        // Optional: Convert null lat/lng to 0 if needed by your frontend map library
+        const formattedResults = results.map(center => ({
+            ...center,
+            latitude: parseFloat(center.latitude) || 0,
+            longitude: parseFloat(center.longitude) || 0,
+            total_saplings_available: parseInt(center.total_saplings_available) || 0,
+            total_allocated_quantity: parseInt(center.total_allocated_quantity) || 0
+        }));
+
+        res.json(formattedResults);
+
+    } catch (err) {
+        console.error("Get Map Data Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};

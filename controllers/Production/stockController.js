@@ -548,3 +548,149 @@ exports.getSpecies = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+// Helper to clear cache
+const clearSchemaCache = async () => {
+  // if (redisClient) await redisClient.del('tn_schema_list');
+  console.log("Cache cleared for tn_schema");
+};
+
+// --- GET ALL & GET BY ID (Combined) ---
+exports.getScheme = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. GET BY ID Logic
+    if (id) {
+      const [rows] = await db.query('SELECT * FROM tn_schema WHERE id = ?', [id]);
+
+      if (rows.length === 0) {
+        return res.status(404).json({ error: "Scheme not found" });
+      }
+
+      let scheme = rows[0];
+      // Parse JSON string back to array if needed
+      if (scheme.species_preferred && typeof scheme.species_preferred === 'string') {
+        try { scheme.species_preferred = JSON.parse(scheme.species_preferred); } catch (e) {}
+      }
+
+      return res.json(scheme);
+    }
+
+    // 2. GET ALL Logic
+    const [rows] = await db.query('SELECT * FROM tn_schema ORDER BY id DESC');
+    
+    // Optional: Parse species_preferred for all items
+    const parsedRows = rows.map(row => {
+      if (row.species_preferred && typeof row.species_preferred === 'string') {
+        try { row.species_preferred = JSON.parse(row.species_preferred); } catch (e) {}
+      }
+      return row;
+    });
+
+    res.json({ results: parsedRows });
+
+  } catch (err) {
+    console.error("Get Scheme Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// --- CREATE NEW SCHEME ---
+exports.createScheme = async (req, res) => {
+  try {
+    const { name, percentage, species_preferred } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: "Scheme name is required" });
+    }
+
+    const speciesJson = species_preferred ? JSON.stringify(species_preferred) : null;
+
+    const [result] = await db.query(
+      `INSERT INTO tn_schema (name, percentage, species_preferred) VALUES (?, ?, ?)`,
+      [name, percentage || null, speciesJson]
+    );
+
+    await clearSchemaCache();
+
+    res.status(201).json({
+      id: result.insertId,
+      name,
+      percentage,
+      species_preferred
+    });
+  } catch (err) {
+    console.error("Create Scheme Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// --- UPDATE SCHEME ---
+exports.updateScheme = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, percentage, species_preferred } = req.body;
+
+    const updates = [];
+    const values = [];
+
+    if (name !== undefined) {
+      updates.push('name = ?');
+      values.push(name);
+    }
+    if (percentage !== undefined) {
+      updates.push('percentage = ?');
+      values.push(percentage);
+    }
+    if (species_preferred !== undefined) {
+      updates.push('species_preferred = ?');
+      values.push(JSON.stringify(species_preferred));
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: "No fields provided to update" });
+    }
+
+    values.push(id);
+
+    const [result] = await db.query(
+      `UPDATE tn_schema SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Scheme not found" });
+    }
+
+    await clearSchemaCache();
+
+    res.json({ message: "Scheme updated successfully" });
+  } catch (err) {
+    console.error("Update Scheme Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// --- DELETE SCHEME ---
+exports.deleteScheme = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [result] = await db.query('DELETE FROM tn_schema WHERE id = ?', [id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Scheme not found" });
+    }
+
+    await clearSchemaCache();
+
+    res.json({ message: "Scheme deleted successfully" });
+  } catch (err) {
+    console.error("Delete Scheme Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
