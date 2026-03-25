@@ -55,14 +55,48 @@ exports.assignTarget = async (req, res) => {
             return res.status(400).json({ message: "All fields are required" });
         }
 
-        // Insert into assignment log
+        // 1️⃣ Get target date range
+        const [[target]] = await db.query(
+            `SELECT start_date, end_date FROM target WHERE id = ?`,
+            [target_id]
+        );
+
+        if (!target) {
+            return res.status(404).json({ message: "Target not found" });
+        }
+
+        const { start_date, end_date } = target;
+
+        // 2️⃣ Check if already assigned in overlapping dates
+        const [existingAssignments] = await db.query(
+            `SELECT tal.* 
+             FROM target_assignment_log tal
+             JOIN target t ON tal.target_id = t.id
+             WHERE tal.to_user_id = ?
+             AND (
+                (? BETWEEN t.start_date AND t.end_date)
+                OR
+                (? BETWEEN t.start_date AND t.end_date)
+                OR
+                (t.start_date BETWEEN ? AND ?)
+             )`,
+            [to_user_id, start_date, end_date, start_date, end_date]
+        );
+
+        if (existingAssignments.length > 0) {
+            return res.status(400).json({
+                message: "Target already assigned to this user in overlapping date range"
+            });
+        }
+
+        // 3️⃣ Insert assignment
         await db.query(
             `INSERT INTO target_assignment_log (target_id, from_user_id, to_user_id, level)
              VALUES (?, ?, ?, ?)`,
             [target_id, from_user_id, to_user_id, level]
         );
 
-        // Update target table with current assigned level
+        // 4️⃣ Update level
         await db.query(
             `UPDATE target SET level = ? WHERE id = ?`,
             [level, target_id]
