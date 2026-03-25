@@ -273,21 +273,13 @@ exports.getDesignation = async (req, res) => {
             "SELECT id, name FROM designation ORDER BY id DESC"
         );
 
-        res.status(200).json({
-            success: true,
-            count: rows.length,
-            data: rows
-        });
+        res.json(rows); // 👈 same as department
 
     } catch (err) {
         console.error("Get Designations Error:", err);
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+        res.status(500).json({ error: err.message });
     }
 };
-
 // CREATE designation
 exports.createDesignation = async (req, res) => {
     try {
