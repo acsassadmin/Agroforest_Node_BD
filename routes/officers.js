@@ -13,6 +13,8 @@ router.put('/departments', officerController.updateDepartment);
 router.delete('/departments', officerController.deleteDepartment);
 router.post("/designations", officerController.createDesignation);
 router.get("/designations", officerController.getDesignations);
+router.post("/designations", officerController.createDesignation );
+router.get("/designations", officerController.getDesignations);
 router.put("/designations", officerController.updateDesignation);
 router.delete("/designations/:id", officerController.deleteDesignation);
 router.get('/usernames', officerController.getUsernames); 
