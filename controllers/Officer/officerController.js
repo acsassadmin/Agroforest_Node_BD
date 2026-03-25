@@ -5,49 +5,61 @@ const bcrypt = require("bcrypt");
 // Get all officers
 exports.getOfficers = async (req, res) => {
     try {
-        // We use LEFT JOINs to get the names from related tables.
-        // We also use CASE to convert Gender ID (1/2) to String (Male/Female).
-        
         const query = `
             SELECT 
                 od.id,
-                od.\`officer name\` as officerName,
+                od.\`officer name\` AS officerName,
                 
                 -- Convert Gender ID to Name
                 CASE od.Gender 
                     WHEN 1 THEN 'Male' 
                     WHEN 2 THEN 'Female' 
                     ELSE 'Other' 
-                END as gender,
+                END AS gender,
                 
-                od.Mobile as mobile,
-                od.Email as email,
+                od.Mobile AS mobile,
+                od.Email AS email,
                 
-                -- Get Names from related tables using aliases
-                d.name as department,
-                des.name as designation,
-                r.name as role,
-                u.username as username
+                -- Department, Designation, Role, Username
+                d.name AS department,
+                des.name AS designation,
+                r.name AS role,
+                u.username AS username,
                 
+                -- District and block names
+                dist.District_Name AS districtName,
+                block.Block_Name AS blockName,
+
+                -- Created by user and created timestamp
+                cb.username AS createdBy,          -- or IFNULL(cb.first_name, cb.username) if you want a name
+                od.created_at AS createdAt
             FROM officer_details od
             
-            -- Join with Departments Table (Assuming table name is 'departments')
+            -- Join with Departments Table
             LEFT JOIN department d ON od.Department = d.id
             
-            -- Join with Designations Table (Assuming table name is 'designations')
+            -- Join with Designations Table
             LEFT JOIN designation des ON od.Designation = des.id
             
             -- Join with Roles Table
             LEFT JOIN users_role r ON od.role = r.id
             
-            -- Join with Users Table to get the actual username string
+            -- Join with Users Table (for the officer’s Username field)
             LEFT JOIN users_customuser u ON od.Username = u.id
+            
+            -- Join with District table
+            LEFT JOIN master_district dist ON od.district_id = dist.id
+            
+            -- Join with Block table
+            LEFT JOIN master_block block ON od.block_id = block.id
+            
+            -- Join to get "created by" user
+            LEFT JOIN users_customuser cb ON od.created_by = cb.id
         `;
 
         const [officers] = await db.query(query);
-        
+
         res.json(officers);
-        
     } catch (err) {
         console.error("Get Officers Error:", err);
         res.status(500).json({
@@ -56,7 +68,8 @@ exports.getOfficers = async (req, res) => {
     }
 };
 
-// Get officer by ID
+
+
 exports.getOfficerById = async (req, res) => {
     try {
         const {
@@ -82,83 +95,148 @@ exports.getOfficerById = async (req, res) => {
 
 
 
-// Update officer details
+// Update officer (users_customuser + officer_details)
 exports.updateOfficer = async (req, res) => {
-    try {
-        const {
-            id
-        } = req.params;
-        const {
-            officername,
-            gender,
-            mobile,
-            email,
-            department,
-            designation,
-            role,
-            username
-        } = req.body;
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        const updateQuery = `
-            UPDATE officer_details 
-            SET officername = ?, gender = ?, mobile = ?, email = ?, department = ?, designation = ?, role = ?, username = ?
-            WHERE id = ?`;
+    const { id } = req.params;
+    const {
+      officername,
+      gender,
+      mobile,
+      email,
+      department,
+      designation,
+      role,
+      username,
+      password          // optional
+    } = req.body;
 
-        const [result] = await db.query(updateQuery, [
-            officername,
-            gender,
-            mobile,
-            email,
-            department,
-            designation,
-            role,
-            username,
-            id
-        ]);
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({
-                message: "Officer not found"
-            });
-        }
-
-        res.json({
-            message: "Officer updated"
-        });
-    } catch (err) {
-        console.error("Update Officer Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
+    // 1. Find officer_details row
+    const [officerRows] = await connection.query(
+      'SELECT id, Username FROM officer_details WHERE id = ?', [id]
+    );
+    if (!officerRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Officer not found" });
     }
+    const officerDetail = officerRows[0];
+    const userId = officerDetail.Username;
+
+    // 2. Update officer_details
+    const updateOfficerQuery = `
+      UPDATE officer_details 
+      SET 
+        \`officer name\` = ?, 
+        \`Gender\` = ?,
+        \`Mobile\` = ?,
+        \`Email\` = ?,
+        \`Department\` = ?,
+        \`Designation\` = ?,
+        \`role\` = ?,
+        \`Username\` = ?
+      WHERE id = ?`;
+
+    const genderValue = gender === 'Male' ? 1 : 0;
+    const roleRow = await connection.query(
+      'SELECT id FROM users_role WHERE name = ?', [role]
+    );
+    const roleId = roleRow[0]?.id || null;
+
+    await connection.query(updateOfficerQuery, [
+      officername,
+      genderValue,
+      mobile,
+      email,
+      department,
+      designation,
+      roleId,
+      userId,
+      id
+    ]);
+
+    // 3. Update users_customuser (optional: include password if sent)
+    const updateUserQuery = `
+      UPDATE users_customuser 
+      SET 
+        username = ?,
+        email = ?,
+        department_id = ?,
+        district_id = ?,
+        block_id = ?,
+        role_id = ?
+      ${password ? ', password = ?' : ''}
+      WHERE id = ?`;
+
+    const userValues = [
+      username,
+      email,
+      department,
+      (await connection.query('SELECT district_id FROM officer_details WHERE id = ?', [id]))[0]?.district_id || null,
+      (await connection.query('SELECT block_id FROM officer_details WHERE id = ?', [id]))[0]?.block_id || null,
+      roleId,
+      userId
+    ];
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      userValues.splice(6, 0, hashedPassword); // insert before userId
+    }
+
+    await connection.query(updateUserQuery, userValues);
+
+    await connection.commit();
+
+    res.json({ message: "Officer updated successfully" });
+
+  } catch (err) {
+    await connection.rollback();
+    console.error("Update Officer Error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
 };
 
-// Delete an officer
+
 exports.deleteOfficer = async (req, res) => {
-    try {
-        const {
-            id
-        } = req.params;
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        const deleteQuery = 'DELETE FROM officer_details WHERE id = ?';
-        const [result] = await db.query(deleteQuery, [id]);
+    const { id } = req.params;
 
-        if (result.affectedRows === 0) {
-            return res.status(404).json({
-                message: "Officer not found"
-            });
-        }
-
-        res.json({
-            message: "Officer deleted"
-        });
-    } catch (err) {
-        console.error("Delete Officer Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
+    const [officerRows] = await connection.query(
+      'SELECT Username FROM officer_details WHERE id = ?', [id]
+    );
+    if (!officerRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Officer not found" });
     }
+    const userId = officerRows[0].Username;
+
+    // 1. Delete officer
+    const deleteOfficerQuery = 'DELETE FROM officer_details WHERE id = ?';
+    await connection.query(deleteOfficerQuery, [id]);
+
+    // 2. Delete user (optional: soft delete instead with is_active = 0)
+    const deleteUserQuery = 'DELETE FROM users_customuser WHERE id = ?';
+    await connection.query(deleteUserQuery, [userId]);
+
+    await connection.commit();
+
+    res.json({ message: "Officer and user deleted" });
+
+  } catch (err) {
+    await connection.rollback();
+    console.error("Delete Officer Error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
 };
+
 
 // GET all departments
 exports.getDepartments = async (req, res) => {
@@ -311,6 +389,8 @@ exports.createDesignation = async (req, res) => {
         });
     }
 };
+
+
 exports.updateDesignation = async (req, res) => {
     try {
         const { id } = req.query; // read id from query
@@ -337,7 +417,10 @@ exports.updateDesignation = async (req, res) => {
         console.error("Update Designation Error:", err);
         res.status(500).json({ error: err.message });
     }
-};exports.deleteDesignation = async (req, res) => {
+};
+
+
+exports.deleteDesignation = async (req, res) => {
     try {
         const { id } = req.query; // read id from query
 
@@ -378,21 +461,19 @@ exports.registerOfficer = async (req, res) => {
     const connection = await db.getConnection(); 
     try {
         await connection.beginTransaction();
-        console.log("--- Transaction Started ---");
 
         const {
             officername, gender, mobile, email, department, designation,
-            role, username, password, district_id, block_id
+            role, username, password, district_id, block_id,
+            created_by, created_at // <--- New Fields
         } = req.body;
 
-        // 1. Validation
-        // Added 'department' check since you are saving it now
-        if (!username || !password || !email || !officername ) {
+        if (!username || !password || !email || !officername) {
             await connection.rollback();
-            return res.status(400).json({ message: "Username, Password, Email, Officer Name, and Department are required" });
+            return res.status(400).json({ message: "Missing required fields" });
         }
 
-        // 2. Check existing user
+        // Check existing user
         const [existingUser] = await connection.query(
             'SELECT id FROM users_customuser WHERE email = ? OR username = ?',
             [email, username]
@@ -402,78 +483,57 @@ exports.registerOfficer = async (req, res) => {
             return res.status(400).json({ message: "User already exists" });
         }
 
-        // 3. Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 4. Find Role ID
+        // Find Role ID
         let roleId = null;
         if (role) {
             const [roleRows] = await connection.query(
                 'SELECT id FROM users_role WHERE id = ? OR name = ?',
                 [role, role]
             );
-            if (roleRows.length > 0) {
-                roleId = roleRows[0].id; 
-            } else {
-                await connection.rollback();
-                return res.status(400).json({ message: `Role not found` });
-            }
+            if (roleRows.length > 0) roleId = roleRows[0].id;
         }
 
         let genderValue = gender === 'Male' ? 1 : 0;
 
-        // --- UPDATED INSERT QUERY ---
-        // Added department_id, district_id, block_id
+        // 1. Insert into users_customuser
         const insertUserQuery = `
             INSERT INTO users_customuser 
             (username, password, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         
         const [userResult] = await connection.query(insertUserQuery, [
-            username, 
-            hashedPassword, 
-            email, 
-            roleId, 
-            true,
-            new Date(),
-            false,
-            username,
-            null,
-            department,     // <--- Matches department_id
-            district_id,    // <--- Matches district_id
-            block_id        // <--- Matches block_id
+            username, hashedPassword, email, roleId, true, new Date(), false, username, null,
+            department, district_id, block_id
         ]);
 
-        console.log("Insert 1 SUCCESS. New User ID:", userResult.insertId);
         const userId = userResult.insertId;
 
-        // 6. Insert into officer_details (Logic remains the same)
+        // 2. Insert into officer_details (Added created_by and created_at)
         const insertOfficerQuery = `
             INSERT INTO officer_details
-            (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`, \`created_by\`, \`created_at\`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         
         await connection.query(insertOfficerQuery, [
             officername, genderValue, mobile, email, department, designation,
-            roleId, userId, district_id, block_id
+            roleId, userId, district_id, block_id, 
+            created_by || null, // <--- New Field
+            created_at || new Date() // <--- New Field
         ]);
-        
-        console.log("Insert 2 SUCCESS.");
 
         await connection.commit();
-        console.log("--- Transaction Committed Successfully ---");
-
         res.status(201).json({ message: "Officer registered", user_id: userId });
 
     } catch (err) {
         await connection.rollback();
-        console.error("!!! ERROR CAUGHT !!! Rolling back transaction.", err);
+        console.error("Error:", err);
         res.status(500).json({ error: err.message });
     } finally {
         connection.release();
     }
 };
-
 
 // // Update officer details
 // exports.updateOfficer = async (req, res) => {
