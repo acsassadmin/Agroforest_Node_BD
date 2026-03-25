@@ -3,10 +3,12 @@ const db = require('../../db');
 // ===================== CREATE TARGET PRODUCTION CENTER =====================
 exports.createTargetProductionCenter = async (req, res) => {
     try {
-        const { target_department_id, productioncenter_id, target_quantity, start_date, end_date } = req.body;
+        // 1. Destructure created_by
+        const { target_department_id, productioncenter_id, target_quantity, start_date, end_date, created_by } = req.body;
 
-        if (!target_department_id || !productioncenter_id || !target_quantity || !start_date || !end_date) {
-            return res.status(400).json({ message: "All fields are required" });
+        // 2. Updated Validation
+        if (!target_department_id || !productioncenter_id || !target_quantity || !start_date || !end_date || !created_by) {
+            return res.status(400).json({ message: "All fields including created_by are required" });
         }
 
         // Check for existing target in the same date range
@@ -21,11 +23,12 @@ exports.createTargetProductionCenter = async (req, res) => {
             return res.status(400).json({ message: "Target already exists for this production center in this date range" });
         }
 
+        // 3. Insert with created_by
         const [result] = await db.query(
             `INSERT INTO target_productioncenter 
-             (target_department_id, productioncenter_id, target_quantity, start_date, end_date)
-             VALUES (?, ?, ?, ?, ?)`,
-            [target_department_id, productioncenter_id, target_quantity, start_date, end_date]
+             (target_department_id, productioncenter_id, target_quantity, start_date, end_date, created_by)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [target_department_id, productioncenter_id, target_quantity, start_date, end_date, created_by]
         );
 
         res.status(201).json({ message: "Target Production Center created successfully", target_id: result.insertId });
@@ -39,14 +42,38 @@ exports.createTargetProductionCenter = async (req, res) => {
 // ===================== GET ALL TARGET PRODUCTION CENTERS =====================
 exports.getAllTargetProductionCenters = async (req, res) => {
     try {
+        // 1. Pagination Params
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        // 2. Total Count
+        const [countRows] = await db.query('SELECT COUNT(*) as total FROM target_productioncenter');
+        const total = countRows[0].total;
+
+        // 3. Data Query
         const [rows] = await db.query(
-            `SELECT tpc.*, td.id AS department_id, td.role_id, td.target_tag,
-                    pc.id AS productioncenter_id, pc.name_of_production_centre AS productioncenter_name
+            `SELECT tpc.*, 
+                    td.id AS department_id, td.role_id, td.target_tag,
+                    pc.id AS productioncenter_id, pc.name_of_production_centre AS productioncenter_name,
+                    uc.username AS created_by_name
              FROM target_productioncenter tpc
              JOIN target_department td ON tpc.target_department_id = td.id
-             JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id`
+             JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
+             LEFT JOIN users_customuser uc ON tpc.created_by = uc.id
+             LIMIT ? OFFSET ?`,
+             [limit, offset]
         );
-        res.status(200).json(rows);
+
+        res.status(200).json({
+            data: rows,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
     } catch (err) {
         console.error("Get All Target Production Centers Error:", err);
         res.status(500).json({ error: err.message });
@@ -57,7 +84,16 @@ exports.getAllTargetProductionCenters = async (req, res) => {
 exports.getTargetProductionCenterById = async (req, res) => {
     try {
         const { id } = req.params;
-        const [rows] = await db.query(`SELECT * FROM target_productioncenter WHERE id = ?`, [id]);
+        
+        // 5. Added JOIN with users_customuser
+        const [rows] = await db.query(
+            `SELECT tpc.*, uc.username AS created_by_name 
+             FROM target_productioncenter tpc
+             LEFT JOIN users_customuser uc ON tpc.created_by = uc.id
+             WHERE tpc.id = ?`, 
+             [id]
+        );
+        
         if (rows.length === 0) return res.status(404).json({ message: "Target Production Center not found" });
         res.status(200).json(rows[0]);
     } catch (err) {
@@ -98,26 +134,3 @@ exports.deleteTargetProductionCenter = async (req, res) => {
     }
 };
 
-// ===================== DROPDOWN: PRODUCTION CENTERS =====================
-exports.getProductionCenters = async (req, res) => {
-    try {
-        const [rows] = await db.query(
-            `SELECT id, name_of_production_centre AS name FROM productioncenter_productioncenter`
-        );
-        res.status(200).json(rows);
-    } catch (err) {
-        console.error("Get Production Centers Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-};
-
-// ===================== DROPDOWN: TARGET DEPARTMENTS =====================
-exports.getTargetDepartments = async (req, res) => {
-    try {
-        const [rows] = await db.query(`SELECT id, role_id, target_tag FROM target_department`);
-        res.status(200).json(rows);
-    } catch (err) {
-        console.error("Get Target Departments Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-};

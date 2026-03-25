@@ -60,4 +60,30 @@ router.put('/schema/:id', authenticateToken, stockController.updateScheme);
 router.delete('/schema/:id', authenticateToken, stockController.deleteScheme);
 
 
+
+
+
+
+// District Dashboard Summary
+router.get('/districts/:district_id/summary',  stockController.getDistrictDashboardSummary);
+
+
+
+
+
+
+
+
+
+
 module.exports = router;
+
+
+
+
+
+
+
+
+
+

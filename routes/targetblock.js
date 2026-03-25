@@ -10,8 +10,6 @@ router.get('/:id', targetBlockController.getTargetBlockById);
 router.put('/:id', targetBlockController.updateTargetBlock);
 router.delete('/:id', targetBlockController.deleteTargetBlock);
 
-// Dropdowns
-router.get('/dropdown/departments', targetBlockController.getTargetDepartments);
-router.get('/dropdown/blocks', targetBlockController.getBlocks);
+
 
 module.exports = router;
