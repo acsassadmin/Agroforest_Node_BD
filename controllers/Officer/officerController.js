@@ -1,16 +1,42 @@
 const db = require("../../db");
 const bcrypt = require("bcrypt");
-// ===================== OFFICER =====================
+
+const redisClient = require('../../redisClient');
+
 
 // Get all officers
 exports.getOfficers = async (req, res) => {
     try {
-        const query = `
+        // --- STEP 1: Pagination Parameters ---
+        // Default to page 1 and limit 10 if not provided
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        // --- STEP 2: Redis Caching Key ---
+        // Create a unique key based on the page and limit
+        const cacheKey = `officers:page:${page}:limit:${limit}`;
+
+        // --- STEP 3: Check Redis Cache ---
+        try {
+            const cachedData = await redisClient.get(cacheKey);
+            if (cachedData) {
+                console.log(`Serving from Cache: ${cacheKey}`);
+                return res.json(JSON.parse(cachedData));
+            }
+        } catch (redisError) {
+            console.error("Redis Read Error:", redisError);
+            // Continue to DB if Redis fails
+        }
+
+        // --- STEP 4: Database Query ---
+        
+        // A. Query to get the paginated data
+        const dataQuery = `
             SELECT 
                 od.id,
                 od.\`officer name\` AS officerName,
                 
-                -- Convert Gender ID to Name
                 CASE od.Gender 
                     WHEN 1 THEN 'Male' 
                     WHEN 2 THEN 'Female' 
@@ -20,46 +46,74 @@ exports.getOfficers = async (req, res) => {
                 od.Mobile AS mobile,
                 od.Email AS email,
                 
-                -- Department, Designation, Role, Username
                 d.name AS department,
                 des.name AS designation,
                 r.name AS role,
                 u.username AS username,
                 
-                -- District and block names
                 dist.District_Name AS districtName,
                 block.Block_Name AS blockName,
 
-                -- Created by user and created timestamp
-                cb.username AS createdBy,          -- or IFNULL(cb.first_name, cb.username) if you want a name
+                cb.username AS createdBy,
                 od.created_at AS createdAt
             FROM officer_details od
-            
-            -- Join with Departments Table
             LEFT JOIN department d ON od.Department = d.id
-            
-            -- Join with Designations Table
             LEFT JOIN designation des ON od.Designation = des.id
-            
-            -- Join with Roles Table
             LEFT JOIN users_role r ON od.role = r.id
-            
-            -- Join with Users Table (for the officer’s Username field)
             LEFT JOIN users_customuser u ON od.Username = u.id
-            
-            -- Join with District table
             LEFT JOIN master_district dist ON od.district_id = dist.id
-            
-            -- Join with Block table
             LEFT JOIN master_block block ON od.block_id = block.id
-            
-            -- Join to get "created by" user
             LEFT JOIN users_customuser cb ON od.created_by = cb.id
+            
+            ORDER BY od.id DESC -- Optional: Good practice to order pagination results
+            LIMIT ? OFFSET ?;
         `;
 
-        const [officers] = await db.query(query);
+        // B. Query to get total count (required for frontend pagination UI)
+        const countQuery = `
+            SELECT COUNT(*) as total 
+            FROM officer_details od
+            LEFT JOIN department d ON od.Department = d.id
+            LEFT JOIN designation des ON od.Designation = des.id
+            LEFT JOIN users_role r ON od.role = r.id
+            LEFT JOIN users_customuser u ON od.Username = u.id
+            LEFT JOIN master_district dist ON od.district_id = dist.id
+            LEFT JOIN master_block block ON od.block_id = block.id
+            LEFT JOIN users_customuser cb ON od.created_by = cb.id;
+        `;
 
-        res.json(officers);
+        // Execute both queries in parallel
+        const [officersResult, countResult] = await Promise.all([
+            db.query(dataQuery, [limit, offset]),
+            db.query(countQuery)
+        ]);
+
+        const officers = officersResult[0];
+        const totalItems = countResult[0][0].total;
+        const totalPages = Math.ceil(totalItems / limit);
+
+        // Construct the response object
+        const responseData = {
+            data: officers,
+            pagination: {
+                totalItems: totalItems,
+                totalPages: totalPages,
+                currentPage: page,
+                itemsPerPage: limit
+            }
+        };
+
+        // --- STEP 5: Store in Redis Cache ---
+        try {
+            // Cache for 1 hour (3600 seconds)
+            await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 3600 });
+            console.log(`Cached data for: ${cacheKey}`);
+        } catch (redisError) {
+            console.error("Redis Write Error:", redisError);
+        }
+
+        res.json(responseData);
+
     } catch (err) {
         console.error("Get Officers Error:", err);
         res.status(500).json({
@@ -67,7 +121,6 @@ exports.getOfficers = async (req, res) => {
         });
     }
 };
-
 
 
 exports.getOfficerById = async (req, res) => {
@@ -92,6 +145,83 @@ exports.getOfficerById = async (req, res) => {
     }
 };
 
+exports.registerOfficer = async (req, res) => {
+    const connection = await db.getConnection(); 
+    try {
+        await connection.beginTransaction();
+
+        const {
+            officername, gender, mobile, email, department, designation,
+            role, username, password, district_id, block_id,
+            created_by, created_at // <--- New Fields
+        } = req.body;
+
+        if (!username || !password || !email || !officername) {
+            await connection.rollback();
+            return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        // Check existing user
+        const [existingUser] = await connection.query(
+            'SELECT id FROM users_customuser WHERE email = ? OR username = ?',
+            [email, username]
+        );
+        if (existingUser.length > 0) {
+            await connection.rollback();
+            return res.status(400).json({ message: "User already exists" });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Find Role ID
+        let roleId = null;
+        if (role) {
+            const [roleRows] = await connection.query(
+                'SELECT id FROM users_role WHERE id = ? OR name = ?',
+                [role, role]
+            );
+            if (roleRows.length > 0) roleId = roleRows[0].id;
+        }
+
+        let genderValue = gender === 'Male' ? 1 : 0;
+
+        // 1. Insert into users_customuser
+        const insertUserQuery = `
+            INSERT INTO users_customuser 
+            (username, password, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        
+        const [userResult] = await connection.query(insertUserQuery, [
+            username, hashedPassword, email, roleId, true, new Date(), false, username, null,
+            department, district_id, block_id
+        ]);
+
+        const userId = userResult.insertId;
+
+        // 2. Insert into officer_details (Added created_by and created_at)
+        const insertOfficerQuery = `
+            INSERT INTO officer_details
+            (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`, \`created_by\`, \`created_at\`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        
+        await connection.query(insertOfficerQuery, [
+            officername, genderValue, mobile, email, department, designation,
+            roleId, userId, district_id, block_id, 
+            created_by || null, // <--- New Field
+            created_at || new Date() // <--- New Field
+        ]);
+
+        await connection.commit();
+        res.status(201).json({ message: "Officer registered", user_id: userId });
+
+    } catch (err) {
+        await connection.rollback();
+        console.error("Error:", err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        connection.release();
+    }
+};
 
 
 
@@ -457,83 +587,6 @@ exports.getUsernames = async (req, res) => {
 };
 
 // ===================== REGISTER OFFICER =====================
-exports.registerOfficer = async (req, res) => {
-    const connection = await db.getConnection(); 
-    try {
-        await connection.beginTransaction();
-
-        const {
-            officername, gender, mobile, email, department, designation,
-            role, username, password, district_id, block_id,
-            created_by, created_at // <--- New Fields
-        } = req.body;
-
-        if (!username || !password || !email || !officername) {
-            await connection.rollback();
-            return res.status(400).json({ message: "Missing required fields" });
-        }
-
-        // Check existing user
-        const [existingUser] = await connection.query(
-            'SELECT id FROM users_customuser WHERE email = ? OR username = ?',
-            [email, username]
-        );
-        if (existingUser.length > 0) {
-            await connection.rollback();
-            return res.status(400).json({ message: "User already exists" });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        // Find Role ID
-        let roleId = null;
-        if (role) {
-            const [roleRows] = await connection.query(
-                'SELECT id FROM users_role WHERE id = ? OR name = ?',
-                [role, role]
-            );
-            if (roleRows.length > 0) roleId = roleRows[0].id;
-        }
-
-        let genderValue = gender === 'Male' ? 1 : 0;
-
-        // 1. Insert into users_customuser
-        const insertUserQuery = `
-            INSERT INTO users_customuser 
-            (username, password, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        
-        const [userResult] = await connection.query(insertUserQuery, [
-            username, hashedPassword, email, roleId, true, new Date(), false, username, null,
-            department, district_id, block_id
-        ]);
-
-        const userId = userResult.insertId;
-
-        // 2. Insert into officer_details (Added created_by and created_at)
-        const insertOfficerQuery = `
-            INSERT INTO officer_details
-            (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`, \`created_by\`, \`created_at\`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        
-        await connection.query(insertOfficerQuery, [
-            officername, genderValue, mobile, email, department, designation,
-            roleId, userId, district_id, block_id, 
-            created_by || null, // <--- New Field
-            created_at || new Date() // <--- New Field
-        ]);
-
-        await connection.commit();
-        res.status(201).json({ message: "Officer registered", user_id: userId });
-
-    } catch (err) {
-        await connection.rollback();
-        console.error("Error:", err);
-        res.status(500).json({ error: err.message });
-    } finally {
-        connection.release();
-    }
-};
 
 // // Update officer details
 // exports.updateOfficer = async (req, res) => {
