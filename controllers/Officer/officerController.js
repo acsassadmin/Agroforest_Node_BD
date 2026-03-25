@@ -350,7 +350,11 @@ exports.getDesignations = async (req, res) => {
         const [rows] = await db.query(
             "SELECT id, name FROM designation ORDER BY id DESC"
         );
+
+        // RETURN ONLY THE ARRAY.
+        // Do not wrap it in { success: true, data: ... }
         res.json(rows);
+
     } catch (err) {
         console.error("Get Designations Error:", err);
         res.status(500).json({

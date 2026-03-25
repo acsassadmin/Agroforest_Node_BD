@@ -61,6 +61,7 @@ exports.assignTarget = async (req, res) => {
              VALUES (?, ?, ?, ?)`,
             [target_id, from_user_id, to_user_id, level]
         );
+        
 
         // Update target table with current assigned level
         await db.query(
