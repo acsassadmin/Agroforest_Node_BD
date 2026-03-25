@@ -269,15 +269,48 @@ exports.deleteDepartment = async (req, res) => {
 // GET all designations
 exports.getDesignation = async (req, res) => {
     try {
-        const [rows] = await db.query(
-            "SELECT id, name FROM designation ORDER BY id DESC"
+        // Pagination params
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        // Validate
+        if (page < 1 || limit < 1) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid pagination values"
+            });
+        }
+
+        // Total count
+        const [[{ total }]] = await db.query(
+            "SELECT COUNT(*) AS total FROM designation"
         );
 
-        res.json(rows); // 👈 same as department
+        // Data query
+        const [rows] = await db.query(
+            "SELECT id, name FROM designation ORDER BY id DESC LIMIT ? OFFSET ?",
+            [limit, offset]
+        );
+
+        // Response
+        res.status(200).json({
+            success: true,
+            data: rows,              // 👈 always array
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
 
     } catch (err) {
         console.error("Get Designations Error:", err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
     }
 };
 // CREATE designation
