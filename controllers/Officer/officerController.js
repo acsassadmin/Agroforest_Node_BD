@@ -7,31 +7,26 @@ const redisClient = require('../../redisClient');
 // Get all officers
 exports.getOfficers = async (req, res) => {
     try {
-        // --- STEP 1: Pagination Parameters ---
-        // Default to page 1 and limit 10 if not provided
+        // 1. Get Pagination and Filter params
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
+        
+        // CHANGE: Expecting role_id from frontend
+        const roleIdFilter = req.query.role_id; 
 
-        // --- STEP 2: Redis Caching Key ---
-        // Create a unique key based on the page and limit
-        const cacheKey = `officers:page:${page}:limit:${limit}`;
+        // 2. Setup Filtering Condition
+        let whereClause = '';
+        const queryParams = [];
 
-        // --- STEP 3: Check Redis Cache ---
-        try {
-            const cachedData = await redisClient.get(cacheKey);
-            if (cachedData) {
-                console.log(`Serving from Cache: ${cacheKey}`);
-                return res.json(JSON.parse(cachedData));
-            }
-        } catch (redisError) {
-            console.error("Redis Read Error:", redisError);
-            // Continue to DB if Redis fails
+        if (roleIdFilter) {
+            // Filter directly by the role ID column in officer_details
+            whereClause = 'WHERE od.role = ?';
+            queryParams.push(roleIdFilter);
         }
 
-        // --- STEP 4: Database Query ---
-        
-        // A. Query to get the paginated data
+        // 3. Data Query
+        // Note: I removed the comment that caused the syntax error
         const dataQuery = `
             SELECT 
                 od.id,
@@ -65,35 +60,49 @@ exports.getOfficers = async (req, res) => {
             LEFT JOIN master_block block ON od.block_id = block.id
             LEFT JOIN users_customuser cb ON od.created_by = cb.id
             
-            ORDER BY od.id DESC -- Optional: Good practice to order pagination results
+            ${whereClause}
+            
+            ORDER BY od.id DESC
             LIMIT ? OFFSET ?;
         `;
 
-        // B. Query to get total count (required for frontend pagination UI)
+        // 4. Count Query
         const countQuery = `
             SELECT COUNT(*) as total 
             FROM officer_details od
-            LEFT JOIN department d ON od.Department = d.id
-            LEFT JOIN designation des ON od.Designation = des.id
-            LEFT JOIN users_role r ON od.role = r.id
-            LEFT JOIN users_customuser u ON od.Username = u.id
-            LEFT JOIN master_district dist ON od.district_id = dist.id
-            LEFT JOIN master_block block ON od.block_id = block.id
-            LEFT JOIN users_customuser cb ON od.created_by = cb.id;
+            ${whereClause}
         `;
 
-        // Execute both queries in parallel
+        // Prepare parameters
+        const dataParams = [...queryParams, limit, offset];
+        const countParams = [...queryParams];
+
+        // Execute queries
         const [officersResult, countResult] = await Promise.all([
-            db.query(dataQuery, [limit, offset]),
-            db.query(countQuery)
+            db.query(dataQuery, dataParams),
+            db.query(countQuery, countParams)
         ]);
 
         const officers = officersResult[0];
         const totalItems = countResult[0][0].total;
         const totalPages = Math.ceil(totalItems / limit);
 
-        // Construct the response object
-        const responseData = {
+        // 5. Redis Caching
+        const cacheKey = `officers:page:${page}:limit:${limit}:role:${roleIdFilter || 'all'}`;
+        
+        // (Optional: Check Redis cache here before querying DB if you want read-cache logic)
+        
+        try {
+            // Store in cache
+            await redisClient.set(cacheKey, JSON.stringify({
+                data: officers,
+                pagination: { totalItems, totalPages, currentPage: page, itemsPerPage: limit }
+            }), { EX: 3600 });
+        } catch (redisError) {
+            console.error("Redis Write Error:", redisError);
+        }
+
+        res.json({
             data: officers,
             pagination: {
                 totalItems: totalItems,
@@ -101,27 +110,13 @@ exports.getOfficers = async (req, res) => {
                 currentPage: page,
                 itemsPerPage: limit
             }
-        };
-
-        // --- STEP 5: Store in Redis Cache ---
-        try {
-            // Cache for 1 hour (3600 seconds)
-            await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 3600 });
-            console.log(`Cached data for: ${cacheKey}`);
-        } catch (redisError) {
-            console.error("Redis Write Error:", redisError);
-        }
-
-        res.json(responseData);
+        });
 
     } catch (err) {
         console.error("Get Officers Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
+        res.status(500).json({ error: err.message });
     }
 };
-
 
 exports.getOfficerById = async (req, res) => {
     try {
@@ -233,29 +228,34 @@ exports.updateOfficer = async (req, res) => {
 
     const { id } = req.params;
     const {
-      officername,
-      gender,
-      mobile,
-      email,
-      department,
-      designation,
-      role,
+      officername, gender, mobile, email, department, designation,
+      role,       // Frontend sends the Role ID (e.g., 5)
       username,
-      password          // optional
+      password,   // optional
+      district_id, // Needed for users_customuser update
+      block_id     // Needed for users_customuser update
     } = req.body;
 
-    // 1. Find officer_details row
+    // 1. Find officer_details row to get the linked User ID
     const [officerRows] = await connection.query(
       'SELECT id, Username FROM officer_details WHERE id = ?', [id]
     );
+    
     if (!officerRows.length) {
       await connection.rollback();
       return res.status(404).json({ message: "Officer not found" });
     }
+    
     const officerDetail = officerRows[0];
     const userId = officerDetail.Username;
 
-    // 2. Update officer_details
+    // 2. Prepare Data for officer_details
+    const genderValue = gender === 'Male' ? 1 : 0; // 1 for Male, 0 for Female
+    
+    // FIX: Frontend sends Role ID directly. Use it directly. No need to query 'users_role' table.
+    const roleId = role; 
+
+    // Update officer_details
     const updateOfficerQuery = `
       UPDATE officer_details 
       SET 
@@ -266,14 +266,10 @@ exports.updateOfficer = async (req, res) => {
         \`Department\` = ?,
         \`Designation\` = ?,
         \`role\` = ?,
-        \`Username\` = ?
+        \`Username\` = ?,
+        \`district_id\` = ?,
+        \`block_id\` = ?
       WHERE id = ?`;
-
-    const genderValue = gender === 'Male' ? 1 : 0;
-    const roleRow = await connection.query(
-      'SELECT id FROM users_role WHERE name = ?', [role]
-    );
-    const roleId = roleRow[0]?.id || null;
 
     await connection.query(updateOfficerQuery, [
       officername,
@@ -282,13 +278,16 @@ exports.updateOfficer = async (req, res) => {
       email,
       department,
       designation,
-      roleId,
+      roleId,      // The valid ID from frontend
       userId,
+      district_id || null,
+      block_id || null,
       id
     ]);
 
-    // 3. Update users_customuser (optional: include password if sent)
-    const updateUserQuery = `
+    // 3. Update users_customuser
+    // We need to update the fields that sync between the two tables
+    let updateUserQuery = `
       UPDATE users_customuser 
       SET 
         username = ?,
@@ -297,27 +296,28 @@ exports.updateOfficer = async (req, res) => {
         district_id = ?,
         block_id = ?,
         role_id = ?
-      ${password ? ', password = ?' : ''}
+        ${password ? ', password = ?' : ''}
       WHERE id = ?`;
 
     const userValues = [
       username,
       email,
       department,
-      (await connection.query('SELECT district_id FROM officer_details WHERE id = ?', [id]))[0]?.district_id || null,
-      (await connection.query('SELECT block_id FROM officer_details WHERE id = ?', [id]))[0]?.block_id || null,
-      roleId,
-      userId
+      district_id || null,
+      block_id || null,
+      roleId
     ];
+
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);
-      userValues.splice(6, 0, hashedPassword); // insert before userId
+      userValues.push(hashedPassword);
     }
+    
+    userValues.push(userId); // WHERE id = ?
 
     await connection.query(updateUserQuery, userValues);
 
     await connection.commit();
-
     res.json({ message: "Officer updated successfully" });
 
   } catch (err) {
@@ -337,26 +337,31 @@ exports.deleteOfficer = async (req, res) => {
 
     const { id } = req.params;
 
+    // 1. Find the User ID associated with this officer
     const [officerRows] = await connection.query(
       'SELECT Username FROM officer_details WHERE id = ?', [id]
     );
+    
     if (!officerRows.length) {
       await connection.rollback();
       return res.status(404).json({ message: "Officer not found" });
     }
+    
     const userId = officerRows[0].Username;
 
-    // 1. Delete officer
+    // 2. Delete from officer_details
+    // This removes their specific officer permissions/data
     const deleteOfficerQuery = 'DELETE FROM officer_details WHERE id = ?';
     await connection.query(deleteOfficerQuery, [id]);
 
-    // 2. Delete user (optional: soft delete instead with is_active = 0)
-    const deleteUserQuery = 'DELETE FROM users_customuser WHERE id = ?';
-    await connection.query(deleteUserQuery, [userId]);
+    // 3. SOFT DELETE the user (Update is_active to 0)
+    // This prevents login but keeps their ID in history tables (like created_by)
+    const softDeleteUserQuery = 'UPDATE users_customuser SET is_active = 0 WHERE id = ?';
+    await connection.query(softDeleteUserQuery, [userId]);
 
     await connection.commit();
 
-    res.json({ message: "Officer and user deleted" });
+    res.json({ message: "Officer deleted and user deactivated successfully" });
 
   } catch (err) {
     await connection.rollback();
