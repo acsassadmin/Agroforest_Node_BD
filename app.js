@@ -33,5 +33,5 @@ app.use('/targetproductioncenter', targetProductionCenterRoutes);
 app.use('/master', masterRoutes);
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://192.168.1.42:${PORT}`);
+  console.log(`Server is running on http://192.168.1.126:${PORT}`);
 });
