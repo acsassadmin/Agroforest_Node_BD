@@ -1,6 +1,33 @@
 const db = require('../../db');
 const redisClient = require('../../redisClient');
 const ExcelJS = require('exceljs');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+
+const uploadDir = './uploads/stock_images/';
+if (!fs.existsSync(uploadDir)){
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // unique filename: fieldname-timestamp.ext
+    cb(null, file.fieldname + '-' + Date.now() + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
+// Export the multer middleware to be used in the route
+exports.uploadMiddleware = upload.any(); 
 
 // --- HELPER: Clear Cache ---
 const clearStockCache = async () => {
@@ -133,80 +160,117 @@ exports.getStockDetails = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
-
 exports.createStockDetail = async (req, res) => {
     try {
-        const data = Array.isArray(req.body) ? req.body : [req.body];
-        const userId = req.user?.id || 1;
+        console.log("🔥 Incoming Request Body:", req.body);
+        console.log("📸 Incoming Files:", req.files);
 
+        // 1. Parse the FormData structure
+        // Frontend sends: items[0][species_id], items[0][image], etc.
+        // We need to convert this flat object into an array of objects.
+        
+        const itemsMap = {};
+
+        // Parse text fields
+        for (const key in req.body) {
+            // Regex to match 'items[0][fieldname]'
+            const match = key.match(/items\[(\d+)\]\[(\w+)\]/);
+            if (match) {
+                const index = match[1];
+                const field = match[2];
+                if (!itemsMap[index]) itemsMap[index] = {};
+                itemsMap[index][field] = req.body[key];
+            }
+        }
+
+        // Parse files
+        if (req.files) {
+            req.files.forEach(file => {
+                // Regex to match 'items[0][image]'
+                const match = file.fieldname.match(/items\[(\d+)\]\[image\]/);
+                if (match) {
+                    const index = match[1];
+                    if (!itemsMap[index]) itemsMap[index] = {};
+                    // Store the relative path or filename
+                    itemsMap[index].image_file = file.filename; 
+                    itemsMap[index].image_path = file.path;
+                }
+            });
+        }
+
+        const data = Object.values(itemsMap);
+        console.log("📦 Parsed Data Array:", data);
+
+        if (data.length === 0) {
+            return res.status(400).json({ error: "No valid data found in request" });
+        }
+
+        const userId = req.user?.id || 1;
         const insertedIds = [];
 
-        for (const item of data) {
+        for (let i = 0; i < data.length; i++) {
+            const item = data[i];
+
+            console.log(`\n================ ITEM ${i + 1} ================`);
+            console.log("📥 Parsed Item:", item);
 
             const now = new Date();
-
             const year = now.getFullYear();
             const month = String(now.getMonth() + 1).padStart(2, '0');
 
-            // ✅ Dates
-            const productionDate = item.production_date
-                ? new Date(item.production_date)
-                : now;
-
+            // Dates
+            const productionDate = item.production_date ? new Date(item.production_date) : now;
             const expiryDate = item.expiry_date ? new Date(item.expiry_date) : null;
-
-            // ❌ REMOVED: sapling_age calculation completely
-            // ✅ NOW COMES FROM FRONTEND
             const saplingAge = item.sapling_age || "";
 
-            // ✅ Lot number logic (unchanged)
+            // Lot number generation
             const [rows] = await db.query(
-                `SELECT lot_number 
-                 FROM productioncenter_stockdetails 
-                 WHERE lot_number LIKE ? 
-                 ORDER BY id DESC LIMIT 1`,
+                `SELECT lot_number FROM productioncenter_stockdetails WHERE lot_number LIKE ? ORDER BY id DESC LIMIT 1`,
                 [`L%-%-${year}`]
             );
 
             let nextNumber = 1;
-
             if (rows.length > 0) {
                 const lastLot = rows[0].lot_number;
                 const lastSeq = parseInt(lastLot.substring(1, 4));
-                nextNumber = lastSeq + 1;
+                if (!isNaN(lastSeq)) nextNumber = lastSeq + 1;
             }
 
             const sequence = String(nextNumber).padStart(3, '0');
             const lotNumber = `L${sequence}-${month}-${year}`;
 
-            // ✅ INSERT
+            // Insert Payload
+            const insertPayload = [
+                item.production_center,
+                item.species_id,
+                item.saplings_available,
+                item.allocated_quantity || 0,
+                saplingAge,
+                item.price_per_sapling,
+                userId,
+                lotNumber,
+                productionDate,
+                expiryDate,
+                item.latitude || null,
+                item.longitude || null,
+                item.address || null,
+                item.image_path || null, // Save image path to DB if column exists
+                now
+            ];
+
+            // Updated SQL to include lat/long/address/image if columns exist
             const [result] = await db.query(
                 `INSERT INTO productioncenter_stockdetails 
-                (production_center_id, species_id, saplings_available, allocated_quantity, sapling_age, price_per_sapling, created_by_id, lot_number, production_date, expiry_date, \`current_date\`, created_at, updated_at) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-                [
-                    item.production_center,
-                    item.species_id,
-                    item.saplings_available,
-                    item.allocated_quantity || 0,
-                    saplingAge, // ✅ FROM FRONTEND
-                    item.price_per_sapling,
-                    userId,
-                    lotNumber,
-                    productionDate,
-                    expiryDate,
-                    now
-                ]
+                (production_center_id, species_id, saplings_available, allocated_quantity, sapling_age, price_per_sapling, created_by_id, lot_number, production_date, expiry_date, latitude, longitude, address, image, created_at, updated_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+                insertPayload
             );
 
             insertedIds.push({
                 id: result.insertId,
-                lot_number: lotNumber,
-                sapling_age: saplingAge
+                lot_number: lotNumber
             });
         }
-
-        await clearStockCache();
 
         res.status(201).json({
             message: "Created successfully",
@@ -214,6 +278,7 @@ exports.createStockDetail = async (req, res) => {
         });
 
     } catch (err) {
+        console.error("❌ CREATE STOCK ERROR:", err);
         res.status(400).json({ error: err.message });
     }
 };
