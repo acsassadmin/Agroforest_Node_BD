@@ -22,7 +22,13 @@ router.get('/production-centers-nearby/', authenticateToken, prodController.getN
 
 //report
 router.get('/district-summary/', authenticateToken, prodController.getDistrictSummary);
-router.get('/districts/summary', authenticateToken, prodController.getSingleDistrictSummary);
+router.get('/districts/summary/', authenticateToken, prodController.getSingleDistrictSummary);
+
+router.get('/blocksummary/', prodController.getBlockSummary);
+router.get('/single-blocksummary', prodController.getSingleBlockSummary);
+router.get('/productioncenter-summary', prodController.getProductionCenterSummary);
+router.get('/single-productioncenter-summary', prodController.getSingleProductionCenterSummary);
+
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
 router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);
@@ -51,6 +57,7 @@ router.put('/stock-requests/', authenticateToken, stockController.handleStockReq
 // Excel & Dashboard
 router.get('/production-centers/excel/', authenticateToken, stockController.downloadExcel);
 router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
+
 
 
 // GET ALL (uses same function as below)
