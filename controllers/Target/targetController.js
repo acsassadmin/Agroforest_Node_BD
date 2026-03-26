@@ -3,12 +3,13 @@ const db = require("../../db");
 // ===================== CREATE TARGET =====================
 exports.createTarget = async (req, res) => {
     try {
-        // Log body only if it exists
-        if (req.body && Object.keys(req.body).length) {
-            console.log("req.body:", req.body);
+        if (!req.body || Object.keys(req.body).length === 0) {
+            return res.status(400).json({ error: "Request body is empty or missing" });
         }
 
-        const { role, target_tag, target_quantity, start_date, end_date } = req.body;
+        console.log("req.body:", req.body);
+
+        const { role, target_tag, target_quantity, start_date, end_date, scheme_id = null } = req.body;
 
         if (!role || !target_tag || !target_quantity || !start_date || !end_date) {
             return res.status(400).json({ message: "All fields are required" });
@@ -17,22 +18,25 @@ exports.createTarget = async (req, res) => {
         const [existing] = await db.query(
             `SELECT * FROM target 
              WHERE role = ? AND target_tag = ?
+             AND scheme_id <=> ?
              AND (
                 (? BETWEEN start_date AND end_date)
                 OR
                 (? BETWEEN start_date AND end_date)
              )`,
-            [role, target_tag, start_date, end_date]
+            [role, target_tag, scheme_id, start_date, end_date]
         );
 
         if (existing.length > 0) {
-            return res.status(400).json({ message: "Target already exists for this item in this date range" });
+            return res.status(400).json({ 
+                message: "Target already exists for this item/scheme in this date range" 
+            });
         }
 
         const [result] = await db.query(
-            `INSERT INTO target (role, target_tag, target_quantity, start_date, end_date)
-             VALUES (?, ?, ?, ?, ?)`,
-            [role, target_tag, target_quantity, start_date, end_date]
+            `INSERT INTO target (role, target_tag, target_quantity, start_date, end_date, scheme_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [role, target_tag, target_quantity, start_date, end_date, scheme_id]
         );
 
         res.status(201).json({
@@ -46,36 +50,40 @@ exports.createTarget = async (req, res) => {
     }
 };
 
-
-
 // ===================== GET AVAILABLE ITEMS FOR DROPDOWN BY ROLE =====================
 exports.getAvailableItems = async (req, res) => {
     try {
-        const { role } = req.query;
+        let { role } = req.query;
+
+        if (!role) {
+            return res.status(400).json({ message: "Role is required" });
+        }
+
+        const normalizedRole = role.toLowerCase().trim().replace(/\s+/g, '_');
         let items;
 
-        if (role === "department") {
+        if (normalizedRole === "department") {
             [items] = await db.query(
                 `SELECT id, name FROM department
                  WHERE id NOT IN (SELECT target_tag FROM target WHERE role = 'department')`
             );
-        } else if (role === "district") {
+        } else if (normalizedRole === "district") {
             [items] = await db.query(
-                `SELECT id, name FROM master_district
+                `SELECT id, District_Name as name FROM master_district
                  WHERE id NOT IN (SELECT target_tag FROM target WHERE role = 'district')`
             );
-        } else if (role === "block") {
+        } else if (normalizedRole === "block") {
             [items] = await db.query(
-                `SELECT id, name FROM master_blocks
+                `SELECT id, Block_Name as name FROM master_blocks
                  WHERE id NOT IN (SELECT target_tag FROM target WHERE role = 'block')`
             );
-        } else if (role === "production_center") {
+        } else if (normalizedRole === "production_center") {
             [items] = await db.query(
-                `SELECT id, name FROM productioncenter_productioncenter
+                `SELECT id, name_of_production_centre as name FROM productioncenter_productioncenter
                  WHERE id NOT IN (SELECT target_tag FROM target WHERE role = 'production_center')`
             );
         } else {
-            return res.status(400).json({ message: "Invalid role" });
+            return res.status(400).json({ message: `Invalid role: '${role}'` });
         }
 
         res.status(200).json(items);
@@ -86,31 +94,22 @@ exports.getAvailableItems = async (req, res) => {
     }
 };
 
-
-
-
-// controllers/Target/targetController.js
+// ===================== EDIT TARGET =====================
 exports.editTarget = async (req, res) => {
     try {
-        const { target_id, target_quantity, start_date, end_date } = req.body;
+        const { target_id, target_quantity, start_date, end_date, scheme_id = null } = req.body;
 
         if (!target_id || !target_quantity || !start_date || !end_date) {
             return res.status(400).json({ message: "All fields are required" });
         }
 
-        // Check if the target exists
-        const [existing] = await db.query(
-            `SELECT * FROM target WHERE id = ?`,
-            [target_id]
-        );
+        const [existing] = await db.query(`SELECT * FROM target WHERE id = ?`, [target_id]);
 
         if (existing.length === 0) {
             return res.status(404).json({ message: "Target not found" });
         }
 
         const target = existing[0];
-
-        // Restrict editing: only allow edit if today is before start_date
         const today = new Date();
         const startDate = new Date(target.start_date);
 
@@ -118,12 +117,9 @@ exports.editTarget = async (req, res) => {
             return res.status(403).json({ message: "Cannot edit target after start date" });
         }
 
-        // Update target
         await db.query(
-            `UPDATE target
-             SET target_quantity = ?, start_date = ?, end_date = ?
-             WHERE id = ?`,
-            [target_quantity, start_date, end_date, target_id]
+            `UPDATE target SET target_quantity = ?, start_date = ?, end_date = ?, scheme_id = ? WHERE id = ?`,
+            [target_quantity, start_date, end_date, scheme_id, target_id]
         );
 
         res.status(200).json({ message: "Target updated successfully" });
@@ -134,23 +130,63 @@ exports.editTarget = async (req, res) => {
     }
 };
 
-// ===================== FETCH ALL ITEMS FROM ANY TABLE =====================
+// ===================== GET ALL TARGETS (NEW) =====================
+// This function fetches the list of created targets to display on the frontend
+exports.getAllTargets = async (req, res) => {
+    try {
+        // We join with tn_schema to show the scheme name if it exists
+        const [rows] = await db.query(`
+            SELECT 
+                t.id, 
+                t.role, 
+                t.target_tag, 
+                t.target_quantity, 
+                t.start_date, 
+                t.end_date, 
+                t.scheme_id,
+                s.name as scheme_name
+            FROM target t
+            LEFT JOIN tn_schema s ON t.scheme_id = s.id
+            ORDER BY t.id DESC
+        `);
+        
+        res.status(200).json(rows);
+    } catch (err) {
+        console.error("Get All Targets Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// ===================== FETCH ALL ITEMS FROM ANY TABLE (FIXED) =====================
 exports.getTableData = async (req, res) => {
     try {
-        const { table } = req.query;
+        let { table } = req.query;
 
-        const validTables = [
-            "department",
-            "master_district",
-            "master_blocks",
-            "productioncenter_productioncenter"
-        ];
-
-        if (!validTables.includes(table)) {
-            return res.status(400).json({ message: "Invalid table name" });
+        if (!table) {
+            return res.status(400).json({ message: "Table name is required" });
         }
 
-        const [rows] = await db.query(`SELECT id, name FROM ${table}`);
+        // Normalize input to prevent case sensitivity issues
+        table = table.toLowerCase().trim();
+
+        // Map table names to their correct column names for the dropdown
+        const tableConfig = {
+            "department": { nameCol: "name" },
+            "master_district": { nameCol: "District_Name" },
+            "master_blocks": { nameCol: "Block_Name" },
+            "productioncenter_productioncenter": { nameCol: "name_of_production_centre" },
+            "tn_schema": { nameCol: "name" }
+        };
+
+        if (!tableConfig[table]) {
+            return res.status(400).json({ message: `Invalid table name: '${table}'` });
+        }
+
+        const config = tableConfig[table];
+
+        // Use escaping (??) for identifiers to be safe
+        const [rows] = await db.query(`SELECT id, ?? as name FROM ??`, [config.nameCol, table]);
+        
         res.status(200).json(rows);
 
     } catch (err) {
@@ -158,3 +194,4 @@ exports.getTableData = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
