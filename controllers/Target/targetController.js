@@ -46,36 +46,7 @@ exports.createTarget = async (req, res) => {
     }
 };
 
-// ===================== ASSIGN TARGET DOWN THE HIERARCHY =====================
-exports.assignTarget = async (req, res) => {
-    try {
-        const { target_id, from_user_id, to_user_id, level } = req.body;
 
-        if (!target_id || !from_user_id || !to_user_id || !level) {
-            return res.status(400).json({ message: "All fields are required" });
-        }
-
-        // Insert into assignment log
-        await db.query(
-            `INSERT INTO target_assignment_log (target_id, from_user_id, to_user_id, level)
-             VALUES (?, ?, ?, ?)`,
-            [target_id, from_user_id, to_user_id, level]
-        );
-        
-
-        // Update target table with current assigned level
-        await db.query(
-            `UPDATE target SET level = ? WHERE id = ?`,
-            [level, target_id]
-        );
-
-        res.status(200).json({ message: `Target assigned to ${level} successfully` });
-
-    } catch (err) {
-        console.error("Assign Target Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-};
 
 // ===================== GET AVAILABLE ITEMS FOR DROPDOWN BY ROLE =====================
 exports.getAvailableItems = async (req, res) => {

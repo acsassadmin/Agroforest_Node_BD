@@ -24,7 +24,7 @@ exports.createTargetDepartment = async (req, res) => {
         // Check for overlapping targets
         const [existing] = await db.query(
             `SELECT * FROM target_department 
-             WHERE role_id = ? 
+             WHERE department_id = ? 
              AND (district_id = ? OR (district_id IS NULL AND ? IS NULL))
              AND (block_id = ? OR (block_id IS NULL AND ? IS NULL))
              AND (production_center_id = ? OR (production_center_id IS NULL AND ? IS NULL))
@@ -38,7 +38,7 @@ exports.createTargetDepartment = async (req, res) => {
 
         const [result] = await db.query(
             `INSERT INTO target_department 
-            (role_id, target_quantity, start_date, end_date, created_by, district_id, block_id, production_center_id) 
+            (department_id, target_quantity, start_date, end_date, created_by, district_id, block_id, production_center_id) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [department_id, target_quantity, start_date, end_date, created_by, district_id, block_id, production_center_id]
         );
@@ -64,18 +64,21 @@ exports.getAllTargetDepartments = async (req, res) => {
         const [countRows] = await db.query('SELECT COUNT(*) as total FROM target_department');
         const total = countRows[0].total;
 
-        // CORRECTED QUERIES BASED ON YOUR PROVIDED STRUCTURES:
-        // 1. master_district: uses 'District_Name'
-        // 2. master_block: uses 'Block_Name'
-        // 3. productioncenter_productioncenter: uses 'name_of_production_centre'
         const [rows] = await db.query(
             `SELECT 
                 td.id AS target_id,
+                
+                -- ADDED: Department ID (Foreign Key)
+                td.department_id, 
                 d.name AS department_name,
+                
                 td.target_quantity,
                 td.start_date,
                 td.end_date,
                 td.production_center_count,
+                
+                -- ADDED: Created By ID (Foreign Key)
+                td.created_by AS created_by_id,
                 uc.username AS created_by_name,
                 
                 -- Exact Column Names from your DB
@@ -84,7 +87,7 @@ exports.getAllTargetDepartments = async (req, res) => {
                 pc.name_of_production_centre AS production_center_name
                 
             FROM target_department td
-            JOIN department d ON td.role_id = d.id
+            JOIN department d ON td.department_id = d.id
             LEFT JOIN users_customuser uc ON td.created_by = uc.id
             LEFT JOIN master_district dist ON td.district_id = dist.id
             LEFT JOIN master_block blk ON td.block_id = blk.id
@@ -114,23 +117,7 @@ exports.getTargetDepartmentById = async (req, res) => {
         const { id } = req.params;
 
         // CORRECTED QUERIES
-        const [rows] = await db.query(
-            `SELECT 
-                td.*, 
-                d.name AS department_name, 
-                uc.username AS created_by_name,
-                dist.District_Name AS district_name,
-                blk.Block_Name AS block_name,
-                pc.name_of_production_centre AS production_center_name
-            FROM target_department td
-            JOIN department d ON td.role_id = d.id
-            LEFT JOIN users_customuser uc ON td.created_by = uc.id
-            LEFT JOIN master_district dist ON td.district_id = dist.id
-            LEFT JOIN master_block blk ON td.block_id = blk.id
-            LEFT JOIN productioncenter_productioncenter pc ON td.production_center_id = pc.id
-            WHERE td.id = ?`,
-            [id]
-        );
+        
 
         if (rows.length === 0) return res.status(404).json({ message: "Target Department not found" });
 
@@ -168,7 +155,7 @@ exports.updateTargetDepartment = async (req, res) => {
 
         await db.query(
             `UPDATE target_department 
-             SET role_id = ?, target_quantity = ?, start_date = ?, end_date = ?, 
+             SET department_id = ?, target_quantity = ?, start_date = ?, end_date = ?, 
                  district_id = ?, block_id = ?, production_center_id = ?
              WHERE id = ?`,
             [department_id, target_quantity, start_date, end_date, district_id, block_id, production_center_id, id]

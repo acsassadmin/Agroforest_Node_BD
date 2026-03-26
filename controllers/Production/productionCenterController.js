@@ -558,9 +558,9 @@ exports.getDistrictSummary = async (req, res) => {
                 district_id: district.id,
                 district_name: district.District_Name,
                 production_center_count: productionCenterCount,
-                saplings: saplingsPerDistrict,
-                total_saplings: totalSaplings,
-                total_sales: totalSales,
+                saplings: saplingsPerDistrict.filter(s => s.total_quantity > 0), 
+                total_stock_saplings: totalSaplings,
+                total_sales_price: totalSales,
                 total_target: totalTarget
             });
         }
@@ -572,6 +572,77 @@ exports.getDistrictSummary = async (req, res) => {
 
     } catch (err) {
         console.error("District Summary Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+exports.getSingleDistrictSummary = async (req, res) => {
+    try {
+        // 1. Get district_id from Query Parameters (e.g., ?district_id=2)
+        const { district_id } = req.query;
+
+        if (!district_id) {
+            return res.status(400).json({ error: "district_id query parameter is required" });
+        }
+
+        // 2. Get District Name
+        const [districtRows] = await db.query(`SELECT District_Name FROM master_district WHERE id = ?`, [district_id]);
+        if (districtRows.length === 0) {
+            return res.status(404).json({ error: "District not found" });
+        }
+        const districtName = districtRows[0].District_Name;
+
+        // 3. Define Queries
+        const statsQuery = `
+            SELECT 
+                COUNT(DISTINCT pc.id) AS total_production_centers,
+                COALESCE(SUM(ps.saplings_available), 0) AS total_stock_count,
+                COALESCE(SUM(ps.total_selled), 0) AS total_sales_count,
+                COALESCE(SUM(ps.total_selled_price), 0) AS total_sale_price
+            FROM productioncenter_productioncenter pc
+            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+            WHERE pc.district_id = ? 
+        `;
+
+        const targetQuery = `
+            SELECT COALESCE(SUM(tp.target_quantity), 0) AS total_target
+            FROM target_productioncenter tp
+            JOIN productioncenter_productioncenter pc ON tp.productioncenter_id = pc.id
+            WHERE pc.district_id = ?
+        `;
+
+        const saplingsQuery = `
+            SELECT 
+                t.s_name, 
+                SUM(ps.saplings_available) AS count
+            FROM productioncenter_stockdetails ps
+            JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
+            JOIN tbl_agroforest_trees t ON ps.species_id = t.id
+            WHERE pc.district_id = ? 
+            GROUP BY t.s_name
+        `;
+
+        // 4. Run in Parallel
+        const [[statsResult], [targetResult], [saplingsResult]] = await Promise.all([
+            db.query(statsQuery, [district_id]),
+            db.query(targetQuery, [district_id]),
+            db.query(saplingsQuery, [district_id])
+        ]);
+
+        // 5. Construct Payload
+        const responseData = {
+            district: districtName,
+            saplings: saplingsResult,
+            total_production_centers: statsResult[0].total_production_centers || 0,
+            total_stock_sapling: statsResult[0].total_stock_count,     
+            total_sale_saplingcount: statsResult[0].total_sales_count,  
+            total_sale_price: statsResult[0].total_sale_price,
+            target: targetResult[0].total_target
+        };
+
+        res.status(200).json(responseData);
+
+    } catch (err) {
+        console.error("Get Single District Summary Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

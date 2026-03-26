@@ -143,7 +143,7 @@ exports.login = async (req, res) => {
         block_id: user.block_id
       },
       JWT_SECRET,
-      { expiresIn: '15m' }
+      { expiresIn: '2h' }
     );
 
     const refreshToken = jwt.sign(
