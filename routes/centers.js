@@ -30,7 +30,7 @@ router.delete('/distribution-centers/', authenticateToken, distController.delete
 
 // Stock Details
 router.get('/stock-details/', authenticateToken, stockController.getStockDetails);
-router.post('/stock-details/', authenticateToken, stockController.createStockDetail);
+router.post('/stock-details/', authenticateToken,stockController.uploadMiddleware, stockController.createStockDetail);
 router.put('/stock-details/', authenticateToken, stockController.updateStockDetail);
 router.delete('/stock-details/', authenticateToken, stockController.deleteStockDetail);
 

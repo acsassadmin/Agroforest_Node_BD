@@ -1,16 +1,25 @@
-// app.js
 const express = require('express');
 const cors = require('cors');
+const https = require('https');
+const fs = require('fs');
+
 const app = express();
 const PORT = 3001;
 
-app.use(cors()); 
+// ✅ SSL CERT PATHS (IMPORTANT: keep double backslashes OR use /)
+const sslOptions = {
+  key: fs.readFileSync("C:\\Users\\Moneta\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.key"),
+  cert: fs.readFileSync("C:\\Users\\Moneta\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.crt"),
+};
+
+app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.send('Hello, Express!');
+  res.send('Hello, Express over HTTPS 🚀');
 });
 
+// ✅ Routes
 const userRoutes = require('./routes/users');
 const centerRoutes = require('./routes/centers');
 const officerRoutes = require('./routes/officers');
@@ -21,6 +30,7 @@ const targetDistrictRoutes = require('./routes/targetdistrict');
 const targetBlockRoutes = require('./routes/targetblock');
 const targetProductionCenterRoutes = require('./routes/targetproductioncenter');
 const masterRoutes = require("./routes/master");
+
 app.use('/users', userRoutes);
 app.use('/center', centerRoutes);
 app.use('/officers', officerRoutes);
@@ -31,7 +41,8 @@ app.use('/targetdistrict', targetDistrictRoutes);
 app.use('/targetblock', targetBlockRoutes);
 app.use('/targetproductioncenter', targetProductionCenterRoutes);
 app.use('/master', masterRoutes);
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server is running on http://192.168.1.42:${PORT}`);
+
+// ✅ START HTTPS SERVER (instead of app.listen)
+https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 HTTPS running at https://192.168.1.38:${PORT}`);
 });

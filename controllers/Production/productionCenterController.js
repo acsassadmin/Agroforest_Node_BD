@@ -137,56 +137,211 @@ const formatCenterData = (centers, certificates) => {
 
 exports.getProductionCenters = async (req, res) => {
     try {
-        const { id, search, type, page = 1 } = req.query;
+        // 1. Get Filters & Pagination from Query or User Object
+        const user = req.user || {};
+        const query = req.query;
 
-        // 1. Define Cache Key (Must be unique for every filter combination)
-        const cacheKey = `production_center_${id || 'all'}_${search || 'na'}_${type || 'na'}_page${page}`;
+        const id = query.id;
+        const search = query.search;
+        const type = query.type; // production_center_type_id
+        const page = parseInt(query.page) || 1;
+        const limit = parseInt(query.limit) || 10;
+        const offset = (page - 1) * limit;
 
-        // 2. Check Redis
-        const cachedData = await redisClient.get(cacheKey);
-        if (cachedData) {
-            return res.json(JSON.parse(cachedData));
+        // --- NEW FILTER PARAMS ---
+        const production_type = query.production_type; // 'government' or 'private'
+        const status = query.status; // 'approved', 'pending', 'rejected'
+
+        // Helper to parse comma-separated IDs or arrays from query
+        const parseArrayParam = (param) => {
+            if (!param) return [];
+            if (Array.isArray(param)) return param.map(Number).filter(n => !isNaN(n));
+            return param.toString().split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+        };
+
+        const department_ids = parseArrayParam(query.department_ids);
+        const district_ids = parseArrayParam(query.district_ids);
+        const block_ids = parseArrayParam(query.block_ids);
+        // -------------------------
+
+        // Role & Scope Determination
+        const role = query.role || user.role;
+        const user_department_id = query.department_id || user.department_id;
+        const user_district_id = query.district_id || user.district_id;
+        const user_block_id = query.block_id || user.block_id;
+
+        // ---------------------------------------------------------
+        // 2. STRICT VALIDATION
+        // ---------------------------------------------------------
+        if (!role) {
+            return res.status(400).json({ success: false, error: "User role is required." });
         }
 
-        // 3. Single Item Logic
-        if (id) {
-            const [centers] = await db.query(`
-                SELECT pc.*, pct.name as type_name 
-                FROM productioncenter_productioncenter pc
-                JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
-                WHERE pc.id = ?`, [id]);
+        let scopeFilter = 'all';
+        let scopeId = null;
 
-            if (centers.length === 0) return res.status(404).json({ error: "Production Center not found" });
+        if (role === 'department_admin') {
+            if (!user_department_id) return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+            scopeFilter = 'department';
+            scopeId = user_department_id;
+        } else if (role === 'district_admin') {
+            if (!user_district_id) return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+            scopeFilter = 'district';
+            scopeId = user_district_id;
+        } else if (role === 'block_admin') {
+            if (!user_block_id) return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
+            scopeFilter = 'block';
+            scopeId = user_block_id;
+        }
+
+        // Common Joins
+        const joins = `
+            JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
+            LEFT JOIN master_district d ON pc.district_id = d.id
+            LEFT JOIN master_block b ON pc.block_id = b.id
+            LEFT JOIN master_village v ON pc.village_id = v.id
+            LEFT JOIN department dept ON pc.department_id = dept.id
+        `;
+
+        // ---------------------------------------------------------
+        // 3. SINGLE ITEM LOGIC (No Pagination)
+        // ---------------------------------------------------------
+        if (id) {
+            let singleQuery = `
+                SELECT 
+                    pc.*, 
+                    pct.name as type_name,
+                    d.District_Name as district_name,
+                    b.Block_Name as block_name,
+                    v.Village_Name as village_name,
+                    dept.name as department_name
+                FROM productioncenter_productioncenter pc
+                ${joins}
+                WHERE pc.id = ?
+            `;
+            const params = [id];
+
+            // Apply Scope Check
+            if (scopeFilter === 'department') {
+                singleQuery += ' AND pc.department_id = ?';
+                params.push(scopeId);
+            } else if (scopeFilter === 'district') {
+                singleQuery += ' AND pc.district_id = ?';
+                params.push(scopeId);
+            } else if (scopeFilter === 'block') {
+                singleQuery += ' AND pc.block_id = ?';
+                params.push(scopeId);
+            }
+
+            const [centers] = await db.query(singleQuery, params);
+
+            if (centers.length === 0) {
+                return res.status(404).json({ success: false, error: "Production Center not found or access denied" });
+            }
 
             const [certs] = await db.query('SELECT id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id = ?', [id]);
-            
             const formatted = formatCenterData(centers, certs);
-            
-            // Set Cache
-            await redisClient.set(cacheKey, JSON.stringify(formatted[0]), { EX: 3600 });
+
             return res.json(formatted[0]);
         }
 
-        // 4. List Logic
-        let query = `
-            SELECT pc.*, pct.name as type_name 
-            FROM productioncenter_productioncenter pc
-            JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
-            WHERE 1=1`;
-        const params = [];
+        // ---------------------------------------------------------
+        // 4. LIST LOGIC (With Pagination & Filters)
+        // ---------------------------------------------------------
+        
+        // A. Build Base Conditions
+        let whereClauses = ["1=1"];
+        let params = [];
 
+        // Scope Filters (Existing Logic)
+        if (scopeFilter === 'department') {
+            whereClauses.push('pc.department_id = ?');
+            params.push(scopeId);
+        } else if (scopeFilter === 'district') {
+            whereClauses.push('pc.district_id = ?');
+            params.push(scopeId);
+        } else if (scopeFilter === 'block') {
+            whereClauses.push('pc.block_id = ?');
+            params.push(scopeId);
+        }
+
+        // Existing Type Filter
         if (type) {
-            query += ' AND pc.production_center_type_id = ?';
+            whereClauses.push('pc.production_center_type_id = ?');
             params.push(type);
         }
+        
+        // Existing Search Filter
         if (search) {
-            query += ' AND (pc.name_of_production_centre LIKE ? OR pc.contact_person LIKE ? OR pc.mobile_number LIKE ?)';
+            whereClauses.push('(pc.name_of_production_centre LIKE ? OR pc.contact_person LIKE ? OR pc.mobile_number LIKE ?)');
             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
         }
-        query += ' ORDER BY pc.id DESC';
 
-        const [centers] = await db.query(query, params);
+        // --- NEW FILTER LOGIC START ---
         
+        // Filter by Production Type (Government/Private)
+        if (production_type) {
+            whereClauses.push('pc.production_type = ?');
+            params.push(production_type);
+        }
+
+        // Filter by Status
+        if (status) {
+            whereClauses.push('pc.status = ?');
+            params.push(status);
+        }
+
+        // Filter by Multiple Departments
+        if (department_ids.length > 0) {
+            const placeholders = department_ids.map(() => '?').join(',');
+            whereClauses.push(`pc.department_id IN (${placeholders})`);
+            params.push(...department_ids);
+        }
+
+        // Filter by Multiple Districts
+        if (district_ids.length > 0) {
+            const placeholders = district_ids.map(() => '?').join(',');
+            whereClauses.push(`pc.district_id IN (${placeholders})`);
+            params.push(...district_ids);
+        }
+
+        // Filter by Multiple Blocks
+        if (block_ids.length > 0) {
+            const placeholders = block_ids.map(() => '?').join(',');
+            whereClauses.push(`pc.block_id IN (${placeholders})`);
+            params.push(...block_ids);
+        }
+
+        // --- NEW FILTER LOGIC END ---
+
+        const whereString = whereClauses.join(' AND ');
+
+        // B. Get Total Count
+        const countQuery = `SELECT COUNT(*) as total FROM productioncenter_productioncenter pc ${joins} WHERE ${whereString}`;
+        const [countRows] = await db.query(countQuery, params);
+        const totalCount = countRows[0].total;
+
+        // C. Get Paginated Data
+        const dataQuery = `
+            SELECT 
+                pc.*, 
+                pct.name as type_name,
+                d.District_Name as district_name,
+                b.Block_Name as block_name,
+                v.Village_Name as village_name,
+                dept.name as department_name
+            FROM productioncenter_productioncenter pc
+            ${joins}
+            WHERE ${whereString}
+            ORDER BY pc.id DESC
+            LIMIT ? OFFSET ?
+        `;
+        
+        const dataParams = [...params, limit, offset];
+
+        const [centers] = await db.query(dataQuery, dataParams);
+        
+        // D. Fetch Certificates
         const centerIds = centers.map(c => c.id);
         let certs = [];
         if (centerIds.length > 0) {
@@ -194,14 +349,20 @@ exports.getProductionCenters = async (req, res) => {
         }
 
         const formatted = formatCenterData(centers, certs);
-        const responseData = { count: formatted.length, results: formatted };
+        
+        const responseData = {
+            total: totalCount,
+            page: page,
+            limit: limit,
+            count: formatted.length,
+            results: formatted
+        };
 
-        // Set Cache
-        await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 3600 });
         res.json(responseData);
 
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("Error getProductionCenters:", err);
+        res.status(500).json({ success: false, error: err.message });
     }
 };
 
@@ -219,8 +380,8 @@ exports.createProductionCenter = async (req, res) => {
             `INSERT INTO productioncenter_productioncenter
             (production_center_type_id, production_type, status, name_of_production_centre,
              complete_address, district_id, block_id, village_id, contact_person, mobile_number,
-             latitude, longitude, nursery_capacity, certification_details, nursery_category , created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+             latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , created_by_id)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
                 body.production_center_type_id,
                 body.production_type || 'government',
@@ -236,6 +397,7 @@ exports.createProductionCenter = async (req, res) => {
                 body.nursery_capacity,
                 body.certification_details,
                 body.nursery_category ,
+                body.department_id ,
                 userId
             ]
         );
@@ -287,83 +449,62 @@ exports.createProductionCenter = async (req, res) => {
 };
 
 exports.updateProductionCenter = async (req, res) => {
-    const connection = await db.getConnection();
     try {
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: "ID is required" });
 
-        await connection.beginTransaction();
         const body = req.body;
-        const files = req.files;
 
-        // 1. Dynamic Query Builder
-        // This allows us to handle both Full Updates (Form) and Partial Updates (Status Change)
+        const allowedFields = [
+            'status', 
+            'status_updated_by', 
+            'rejected_comment',
+            'name_of_production_centre', 
+            'contact_person', 
+            'mobile_number', 
+            'production_center_type_id',
+            'district_id', 
+            'block_id', 
+            'village_id', 
+            'department_id',
+            'latitude', 
+            'longitude', 
+            'complete_address', 
+            'nursery_category', 
+            'nursery_capacity'
+        ];
+
+        // 2. Build Dynamic Query
         const updates = [];
         const values = [];
 
-        // Map frontend keys to database columns
-        const fieldMap = {
-            production_center_type_id: 'production_center_type_id', // Matches frontend payload
-            name_of_production_centre: 'name_of_production_centre',
-            complete_address: 'complete_address',
-            district_id: 'district_id',       // Fixed: was 'district'
-            taluk: 'taluk',
-            block_id: 'block_id',             // Fixed: was 'block'
-            village_id: 'village_id',         // Fixed: was 'village'
-            contact_person: 'contact_person',
-            mobile_number: 'mobile_number',
-            latitude: 'latitude',
-            longitude: 'longitude',
-            nursery_capacity: 'nursery_capacity',
-            certification_details: 'certification_details',
-            status: 'status',                 // For Officer Approval
-            rejected_comment: 'rejected_comment', // For Officer Rejection
-            nursery_category: 'nursery_category'
-        };
-
-        Object.keys(fieldMap).forEach(key => {
-            // Check if the key exists in the request body
-            if (body[key] !== undefined) {
-                updates.push(`${fieldMap[key]} = ?`);
-                values.push(body[key]);
+        allowedFields.forEach(field => {
+            // Only add to query if the field exists in the request body
+            if (body[field] !== undefined) {
+                updates.push(`${field} = ?`);
+                values.push(body[field]);
             }
         });
 
-        // Execute Update Query if there are fields to update
-        if (updates.length > 0) {
-            values.push(id); // Add ID for WHERE clause
-            await connection.query(
-                `UPDATE productioncenter_productioncenter SET ${updates.join(', ')} WHERE id = ?`,
-                values
-            );
+        if (updates.length === 0) {
+            return res.status(400).json({ error: "No valid fields provided for update" });
         }
 
-        // 2. Handle File Uploads (Only if new files are sent)
-        if (files && files.length > 0) {
-            const certValues = files.map(file => [id, file.path]);
-            await connection.query(
-                'INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?', 
-                [certValues]
-            );
-        }
+        // 3. Execute Update
+        values.push(id); // Add ID for WHERE clause
+        await db.query(
+            `UPDATE productioncenter_productioncenter SET ${updates.join(', ')} WHERE id = ?`, 
+            values
+        );
 
-        await connection.commit();
-        
-        // Clear Cache (assuming this function exists)
-        if (typeof clearProductionCenterCache === 'function') {
-            await clearProductionCenterCache();
-        }
-
-        // Return the updated data
+        // 4. Return Updated Data
+        // Reuse the GET function to return the formatted result
         req.query.id = id;
         return exports.getProductionCenters(req, res);
 
     } catch (err) {
-        await connection.rollback();
-        console.error("Update Error:", err);
-        res.status(400).json({ error: err.message });
-    } finally {
-        connection.release();
+        console.error("Update Production Center Error:", err);
+        res.status(500).json({ error: err.message });
     }
 };
 

@@ -36,7 +36,7 @@ exports.getVillages = async (req, res) => {
 
     // ✅ Filter by block_id if provided
     if (block_id) {
-      query += ` WHERE Block_Id = ?`;
+      query += ` WHERE Block = ?`;
       params.push(block_id);
     }
 
