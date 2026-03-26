@@ -13,7 +13,7 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage: storage });
-exports.uploadMiddleware = upload.array('certificate_files', 10);
+exports.uploadMiddleware = upload.array('certificate_file', 10);
 
 // --- HELPER: Clear Cache ---
 // We need to clear cache whenever data changes (POST, PUT, DELETE)
@@ -380,8 +380,8 @@ exports.createProductionCenter = async (req, res) => {
             `INSERT INTO productioncenter_productioncenter
             (production_center_type_id, production_type, status, name_of_production_centre,
              complete_address, district_id, block_id, village_id, contact_person, mobile_number,
-             latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+             latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , area , created_by_id)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
                 body.production_center_type_id,
                 body.production_type || 'government',
@@ -398,6 +398,7 @@ exports.createProductionCenter = async (req, res) => {
                 body.certification_details,
                 body.nursery_category ,
                 body.department_id ,
+                body.area_acres ,
                 userId
             ]
         );
