@@ -6,6 +6,7 @@ const PORT = 3001;
 
 app.use(cors()); 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); 
 
 app.get('/', (req, res) => {
   res.send('Hello, Express!');
@@ -33,5 +34,5 @@ app.use('/targetproductioncenter', targetProductionCenterRoutes);
 app.use('/master', masterRoutes);
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://192.168.1.126:${PORT}`);
+  console.log(`Server is running on http://192.168.1.41:${PORT}`);
 });

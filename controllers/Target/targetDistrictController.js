@@ -3,17 +3,13 @@ const db = require('../../db');
 // ===================== CREATE TARGET DISTRICT =====================
 exports.createTargetDistrict = async (req, res) => {
     try {
-        // 1. Destructure created_by from body
+        // Destructure only necessary fields
         const { target_department_id, district_id, target_quantity, start_date, end_date, status, created_by } = req.body;
 
-        // 2. Validation updated to include created_by
+        // Validation
         if (!target_department_id || !district_id || target_quantity === undefined || !start_date || !end_date || !created_by) {
-            console.log("Validation Failed: Missing fields");
-            return res.status(400).json({ message: "All fields including created_by are required" });
+            return res.status(400).json({ message: "Department, District, Quantity, Dates, and Creator are required" });
         }
-
-        const [dbCheck] = await db.query('SELECT DATABASE() as currentDb');
-        console.log("CURRENTLY CONNECTED TO DATABASE:", dbCheck[0].currentDb);
 
         // Check Overlap
         const [existing] = await db.query(
@@ -27,17 +23,15 @@ exports.createTargetDistrict = async (req, res) => {
             return res.status(400).json({ message: "Target already exists for this district in this date range" });
         }
 
-        // 3. Insert Data with created_by
+        // Insert Data
         const [result] = await db.query(
             `INSERT INTO target_district 
             (target_department_id, district_id, target_quantity, start_date, end_date, status, created_by) 
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [target_department_id, district_id, target_quantity, start_date, end_date, status || 'Active', created_by]
         );
-        
-        console.log("Database Insert Result:", result);
 
-        // 4. Fetch new record with User Name
+        // Fetch new record with User Name and District Name
         const [newTarget] = await db.query(
             `SELECT td.*, md.District_Name AS district_name, uc.username AS created_by_name
              FROM target_district td
@@ -47,9 +41,9 @@ exports.createTargetDistrict = async (req, res) => {
             [result.insertId]
         );
 
-        res.status(201).json({ 
-            message: "Target District created successfully", 
-            data: newTarget[0] 
+        res.status(201).json({
+            message: "Target District created successfully",
+            data: newTarget[0]
         });
 
     } catch (err) {
@@ -62,8 +56,7 @@ exports.createTargetDistrict = async (req, res) => {
 exports.getAllTargetDistricts = async (req, res) => {
     try {
         const { target_department_id } = req.query;
-        
-        // 1. Pagination Params
+
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
@@ -77,7 +70,6 @@ exports.getAllTargetDistricts = async (req, res) => {
                    td.end_date, 
                    td.status,
                    md.District_Name AS district_name,
-                   CONCAT(td.start_date, ' to ', td.end_date) AS duration,
                    uc.username AS created_by_name
             FROM target_district td
             JOIN master_district md ON td.district_id = md.id
@@ -87,7 +79,6 @@ exports.getAllTargetDistricts = async (req, res) => {
         const params = [];
         const countParams = [];
 
-        // 2. Filter Logic
         if (target_department_id) {
             dataQuery += " WHERE td.target_department_id = ?";
             countQuery += " WHERE td.target_department_id = ?";
@@ -95,11 +86,9 @@ exports.getAllTargetDistricts = async (req, res) => {
             countParams.push(target_department_id);
         }
 
-        // 3. Get Total Count
         const [countRows] = await db.query(countQuery, countParams);
         const total = countRows[0].total;
 
-        // 4. Add Pagination to Data Query
         dataQuery += " LIMIT ? OFFSET ?";
         params.push(limit, offset);
 
@@ -124,19 +113,18 @@ exports.getAllTargetDistricts = async (req, res) => {
 exports.getTargetDistrictById = async (req, res) => {
     try {
         const { id } = req.params;
-        
-        // Added JOIN with users_customuser
+
         const [rows] = await db.query(
             `SELECT td.*, md.District_Name AS district_name, uc.username AS created_by_name
              FROM target_district td
              JOIN master_district md ON td.district_id = md.id
              LEFT JOIN users_customuser uc ON td.created_by = uc.id
-             WHERE td.id = ?`, 
-             [id]
+             WHERE td.id = ?`,
+            [id]
         );
 
         if (rows.length === 0) return res.status(404).json({ message: "Target District not found" });
-        
+
         res.status(200).json(rows[0]);
     } catch (err) {
         console.error("Get Target District By ID Error:", err);
@@ -148,7 +136,6 @@ exports.getTargetDistrictById = async (req, res) => {
 exports.updateTargetDistrict = async (req, res) => {
     try {
         const { id } = req.params;
-        // Note: created_by is typically not updated, but if you need to update other fields:
         const { target_department_id, district_id, target_quantity, start_date, end_date, status } = req.body;
 
         await db.query(

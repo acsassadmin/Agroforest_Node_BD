@@ -22,6 +22,7 @@ router.get('/production-centers-nearby/', authenticateToken, prodController.getN
 
 //report
 router.get('/district-summary/', authenticateToken, prodController.getDistrictSummary);
+router.get('/districts/summary', authenticateToken, prodController.getSingleDistrictSummary);
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
 router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);
@@ -64,8 +65,8 @@ router.delete('/schema/:id', authenticateToken, stockController.deleteScheme);
 
 
 
-// District Dashboard Summary
-router.get('/districts/:district_id/summary',  stockController.getDistrictDashboardSummary);
+
+
 
 
 
