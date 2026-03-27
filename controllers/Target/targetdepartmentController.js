@@ -9,9 +9,7 @@ exports.createTargetDepartment = async (req, res) => {
             start_date, 
             end_date, 
             created_by,
-            district_id,        
-            block_id,           
-            production_center_id 
+     
         } = req.body;
 
         if (!department_id || !target_quantity || !start_date || !end_date || !created_by) {
@@ -25,11 +23,8 @@ exports.createTargetDepartment = async (req, res) => {
         const [existing] = await db.query(
             `SELECT * FROM target_department 
              WHERE department_id = ? 
-             AND (district_id = ? OR (district_id IS NULL AND ? IS NULL))
-             AND (block_id = ? OR (block_id IS NULL AND ? IS NULL))
-             AND (production_center_id = ? OR (production_center_id IS NULL AND ? IS NULL))
              AND ((? BETWEEN start_date AND end_date) OR (? BETWEEN start_date AND end_date))`,
-            [department_id, district_id, district_id, block_id, block_id, production_center_id, production_center_id, start_date, end_date]
+            [department_id,  start_date, end_date]
         );
 
         if (existing.length > 0) {
@@ -38,9 +33,9 @@ exports.createTargetDepartment = async (req, res) => {
 
         const [result] = await db.query(
             `INSERT INTO target_department 
-            (department_id, target_quantity, start_date, end_date, created_by, district_id, block_id, production_center_id) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [department_id, target_quantity, start_date, end_date, created_by, district_id, block_id, production_center_id]
+            (department_id, target_quantity, start_date, end_date, created_by) 
+            VALUES (?, ?, ?, ?, ?)`,
+            [department_id, target_quantity, start_date, end_date, created_by]
         );
 
         res.status(201).json({ 
