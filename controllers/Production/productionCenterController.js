@@ -13,7 +13,7 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage: storage });
-exports.uploadMiddleware = upload.array('certificate_files', 10);
+exports.uploadMiddleware = upload.array('certificate_file', 10);
 
 // --- HELPER: Clear Cache ---
 // We need to clear cache whenever data changes (POST, PUT, DELETE)
@@ -143,7 +143,6 @@ exports.getProductionCenters = async (req, res) => {
 
         const id = query.id;
         const search = query.search;
-        const type = query.type; // production_center_type_id
         const page = parseInt(query.page) || 1;
         const limit = parseInt(query.limit) || 10;
         const offset = (page - 1) * limit;
@@ -196,8 +195,7 @@ exports.getProductionCenters = async (req, res) => {
 
         // Common Joins
         const joins = `
-            JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
-            LEFT JOIN master_district d ON pc.district_id = d.id
+            JOIN master_district d ON pc.district_id = d.id
             LEFT JOIN master_block b ON pc.block_id = b.id
             LEFT JOIN master_village v ON pc.village_id = v.id
             LEFT JOIN department dept ON pc.department_id = dept.id
@@ -265,11 +263,7 @@ exports.getProductionCenters = async (req, res) => {
             params.push(scopeId);
         }
 
-        // Existing Type Filter
-        if (type) {
-            whereClauses.push('pc.production_center_type_id = ?');
-            params.push(type);
-        }
+        
         
         // Existing Search Filter
         if (search) {
@@ -378,12 +372,11 @@ exports.createProductionCenter = async (req, res) => {
         // 1️⃣ Insert Production Center
         const [result] = await connection.query(
             `INSERT INTO productioncenter_productioncenter
-            (production_center_type_id, production_type, status, name_of_production_centre,
+            (production_type, status, name_of_production_centre,
              complete_address, district_id, block_id, village_id, contact_person, mobile_number,
-             latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+             latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , area , created_by_id)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
-                body.production_center_type_id,
                 body.production_type || 'government',
                 body.name_of_production_centre,
                 body.complete_address,
@@ -398,6 +391,7 @@ exports.createProductionCenter = async (req, res) => {
                 body.certification_details,
                 body.nursery_category ,
                 body.department_id ,
+                body.area_acres ,
                 userId
             ]
         );
@@ -462,7 +456,6 @@ exports.updateProductionCenter = async (req, res) => {
             'name_of_production_centre', 
             'contact_person', 
             'mobile_number', 
-            'production_center_type_id',
             'district_id', 
             'block_id', 
             'village_id', 
@@ -583,8 +576,6 @@ exports.getNearbyProductionCenters = async (req, res) => {
                     ELSE 0 
                 END as proximity_score
             FROM productioncenter_productioncenter pc
-            JOIN productioncenter_productioncentertypes pct ON pc.production_center_type_id = pct.id
-            -- ✅ CRITICAL CHANGE: INNER JOIN filters for centers that HAVE the species
             JOIN productioncenter_stockdetails sd ON pc.id = sd.production_center_id
             LEFT JOIN master_district d ON pc.district_id = d.id
             LEFT JOIN master_block b ON pc.block_id = b.id

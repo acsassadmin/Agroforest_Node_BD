@@ -1226,7 +1226,7 @@ exports.getWeeklyFarmerRequestReport = async (req, res) => {
         // Base Query - Join with productioncenter table to check scope
         let query = `
             SELECT 
-                DATE_FORMAT(fr.created_at, '%Y-%m-%d') as report_date,
+                DATE(fr.created_at) as report_date,
                 COUNT(*) as orders_count,
                 COUNT(DISTINCT fr.production_center_id) as production_centers_count,
                 SUM(CASE WHEN fr.status = 'pending' THEN 1 ELSE 0 END) as pending_count,
