@@ -789,15 +789,27 @@ exports.getSingleDistrictSummary = async (req, res) => {
 };
 
 exports.getBlockSummary = async (req, res) => {
+    try {
+        // 1. Get dist_id from query parameters
+        const { dist_id } = req.query;
 
-try {
-        // CHANGE 1: Fetch from master_block instead of master_district
-        const [blocks] = await db.query(`
-            SELECT id, Block_Name 
-            FROM master_block 
-            ORDER BY Block_Name ASC
-        `);
+        // 2. Construct Query
+        // IMPORTANT: We use 'Dist_Name' in the WHERE clause because your data shows 
+        // the District ID is stored in this column, not in 'district_id'.
+        let blockQuery = "SELECT id, Block_Name FROM master_block";
+        const queryParams = [];
 
+        if (dist_id) {
+            blockQuery += " WHERE Dist_Name = ?";
+            queryParams.push(dist_id);
+        }
+
+        blockQuery += " ORDER BY Block_Name ASC";
+
+        // Fetch blocks
+        const [blocks] = await db.query(blockQuery, queryParams);
+
+        // Fetch species list
         const [speciesList] = await db.query(`
             SELECT id, name AS species_name 
             FROM tbl_agroforest_trees 
@@ -807,18 +819,17 @@ try {
         const blockSummaries = [];
 
         for (const block of blocks) {
-
-            // CHANGE 2: Filter by block_id instead of district_id
+            // Find production centers for this block
             const [centers] = await db.query(`
                 SELECT id 
                 FROM productioncenter_productioncenter 
                 WHERE block_id = ? AND status = 'approved'
-            `, [block.id]); 
+            `, [block.id]);
 
             const productionCenterCount = centers.length;
             const centerIds = centers.map(c => c.id);
 
-            // Initialize default structure
+            // Initialize default structure for species
             const saplingsPerBlock = speciesList.map(s => ({
                 species_id: s.id,
                 species_name: s.species_name,
@@ -830,7 +841,7 @@ try {
             let totalTarget = 0;
 
             if (centerIds.length > 0) {
-
+                // Fetch Stock
                 const [saplings] = await db.query(`
                     SELECT t.name AS species_name,
                            SUM(s.saplings_available) AS total_quantity,
@@ -841,7 +852,7 @@ try {
                     GROUP BY t.name
                 `, [centerIds]);
 
-                // Matching logic (same as before)
+                // Match species
                 saplingsPerBlock.forEach(s => {
                     const match = saplings.find(sp => 
                         sp.species_name && 
@@ -859,6 +870,7 @@ try {
                     }
                 });
 
+                // Fetch Targets
                 const [targets] = await db.query(`
                     SELECT SUM(target_quantity) AS total_target
                     FROM target_productioncenter
@@ -868,7 +880,6 @@ try {
                 totalTarget = targets[0].total_target || 0;
             }
 
-            // CHANGE 3: Update response keys to block_id/block_name
             blockSummaries.push({
                 block_id: block.id,
                 block_name: block.Block_Name,
@@ -890,117 +901,32 @@ try {
         res.status(500).json({ error: err.message });
     }
 };
-exports.getSingleBlockSummary = async (req, res) => {
-    try {
-        // 1. Get dist_id from query
-        const { dist_id } = req.query;
 
-        if (!dist_id) {
-            return res.status(400).json({ error: "dist_id query parameter is required" });
-        }
-
-        // 2. Get District Name
-        const [distRows] = await db.query(
-            `SELECT District_Name FROM master_district WHERE id = ?`, 
-            [dist_id]
-        );
-
-        if (distRows.length === 0) {
-            return res.status(404).json({ error: "District not found" });
-        }
-
-        const districtName = distRows[0].District_Name;
-
-        // 3. Get all Block IDs for this District
-        
-        const [blocksInDistrict] = await db.query(
-            `SELECT id FROM productioncenter_productioncenter WHERE district_id = ?`, 
-            [dist_id]
-        );
-
-        // If no blocks exist in this district, return zero stats immediately
-        if (blocksInDistrict.length === 0) {
-            return res.status(200).json({
-                district_id: dist_id, // FIXED: Used dist_id variable
-                district_name: districtName,
-                total_production_centers: 0,
-                total_stock_sapling: 0,
-                total_sale_saplingcount: 0,
-                total_sale_price: 0,
-                target: 0,
-                saplings: []
-            });
-        }
-
-        // Create a list of block IDs
-        const blockIds = blocksInDistrict.map(b => b.id);
-
-        // 4. Queries using block_id IN (?)
-        const statsQuery = `
-            SELECT 
-                COUNT(DISTINCT pc.id) AS total_production_centers,
-                COALESCE(SUM(ps.saplings_available), 0) AS total_stock_count,
-                COALESCE(SUM(ps.total_selled), 0) AS total_sales_count,
-                COALESCE(SUM(ps.total_selled_price), 0) AS total_sale_price
-            FROM productioncenter_productioncenter pc
-            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-            WHERE pc.block_id IN (?) 
-        `;
-
-        const targetQuery = `
-            SELECT COALESCE(SUM(tp.target_quantity), 0) AS total_target
-            FROM target_productioncenter tp
-            JOIN productioncenter_productioncenter pc ON tp.productioncenter_id = pc.id
-            WHERE pc.block_id IN (?)
-        `;
-
-        const saplingsQuery = `
-            SELECT 
-                t.s_name, 
-                SUM(ps.saplings_available) AS count
-            FROM productioncenter_stockdetails ps
-            JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
-            JOIN tbl_agroforest_trees t ON ps.species_id = t.id
-            WHERE pc.block_id IN (?) 
-            GROUP BY t.s_name
-        `;
-
-        // Run in Parallel
-        const [[statsResult], [targetResult], [saplingsResult]] = await Promise.all([
-            db.query(statsQuery, [blockIds]),
-            db.query(targetQuery, [blockIds]),
-            db.query(saplingsQuery, [blockIds])
-        ]);
-
-        // 5. Response
-        const responseData = {
-            district_id: dist_id, // FIXED: Used dist_id variable (defined at top)
-            district_name: districtName,
-            saplings: saplingsResult,
-            total_production_centers: statsResult[0].total_production_centers || 0,
-            total_stock_sapling: statsResult[0].total_stock_count,     
-            total_sale_saplingcount: statsResult[0].total_sales_count,  
-            total_sale_price: statsResult[0].total_sale_price,
-            target: targetResult[0].total_target
-        };
-
-        res.status(200).json(responseData);
-
-    } catch (err) {
-        console.error("Get District Summary Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-};
 exports.getProductionCenterSummary = async (req, res) => {
     try {
-        // FIX: Changed 'production_center_name' to 'name_of_production_centre'
-        const [centers] = await db.query(`
+        // 1. Get block_id from query parameters
+        const { block_id } = req.query;
+
+        // 2. Base Query and Params
+        let centerQuery = `
             SELECT id, name_of_production_centre 
             FROM productioncenter_productioncenter 
             WHERE status = 'approved'
-            ORDER BY name_of_production_centre ASC
-        `);
+        `;
+        const queryParams = [];
 
+        // 3. Filter by block_id if provided
+        if (block_id) {
+            centerQuery += " AND block_id = ?";
+            queryParams.push(block_id);
+        }
+
+        centerQuery += " ORDER BY name_of_production_centre ASC";
+
+        // Fetch centers
+        const [centers] = await db.query(centerQuery, queryParams);
+
+        // Fetch species list
         const [speciesList] = await db.query(`
             SELECT id, name AS species_name 
             FROM tbl_agroforest_trees 
@@ -1010,7 +936,7 @@ exports.getProductionCenterSummary = async (req, res) => {
         const centerSummaries = [];
 
         for (const center of centers) {
-
+            // Fetch Stock for this center
             const [saplings] = await db.query(`
                 SELECT 
                     t.name AS species_name,
@@ -1022,6 +948,7 @@ exports.getProductionCenterSummary = async (req, res) => {
                 GROUP BY t.name
             `, [center.id]);
 
+            // Initialize default structure
             const saplingsPerCenter = speciesList.map(s => ({
                 species_id: s.id,
                 species_name: s.species_name,
@@ -1032,6 +959,7 @@ exports.getProductionCenterSummary = async (req, res) => {
             let totalSales = 0;
             let totalTarget = 0;
 
+            // Match species
             saplingsPerCenter.forEach(s => {
                 const match = saplings.find(sp => 
                     sp.species_name && 
@@ -1049,6 +977,7 @@ exports.getProductionCenterSummary = async (req, res) => {
                 }
             });
 
+            // Fetch Targets
             const [targets] = await db.query(`
                 SELECT SUM(target_quantity) AS total_target
                 FROM target_productioncenter
@@ -1059,7 +988,7 @@ exports.getProductionCenterSummary = async (req, res) => {
 
             centerSummaries.push({
                 center_id: center.id,
-                center_name: center.name_of_production_centre, // FIX: Updated variable name
+                center_name: center.name_of_production_centre,
                 saplings: saplingsPerCenter.filter(s => s.total_quantity > 0), 
                 total_stock_saplings: totalSaplings,
                 total_sales_price: totalSales,
