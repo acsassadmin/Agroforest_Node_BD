@@ -136,7 +136,7 @@ exports.login = async (req, res) => {
     const accessToken = jwt.sign(
       { id: user.id, role: user.role_name },
       JWT_SECRET,
-      { expiresIn: '15m' }
+      { expiresIn: '2h' }
     );
 
     const refreshToken = jwt.sign(
@@ -771,22 +771,23 @@ exports.orderPlaced = async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { request_id, payment_type, total_amount, type, scheme_id } = req.body;
+        // Added scheme_total_amount to destructuring
+        const { request_id, payment_type, total_amount, type, scheme_id, scheme_total_amount } = req.body;
 
-        console.log("Incoming Order:", { request_id, payment_type, total_amount, type, scheme_id });
+        console.log("Incoming Order:", { request_id, payment_type, total_amount, type, scheme_id, scheme_total_amount });
 
         // 1. Update request header
+        // Added scheme_total_amount to the UPDATE query
         const [headerResult] = await connection.query(
             `UPDATE users_farmerrequest 
-             SET status = 'billed', payment_type = ?, total_amount = ?, type = ?, scheme_id = ? 
+             SET status = 'billed', payment_type = ?, total_amount = ?, type = ?, scheme_id = ?, scheme_total_amount = ? 
              WHERE id = ?`,
-            [payment_type, total_amount, type, scheme_id, request_id]
+            [payment_type, total_amount, type, scheme_id, scheme_total_amount, request_id]
         );
 
         console.log("Header Update Result:", headerResult);
 
         // 2. Get approved items WITH their price
-        // Joining with productioncenter_stockdetails to get the current price_per_sapling
         const [items] = await connection.query(
             `SELECT 
                 fri.stock_id, 
@@ -804,10 +805,8 @@ exports.orderPlaced = async (req, res) => {
         for (const item of items) {
             console.log("Processing Item:", item);
 
-            // Calculate the total price for this specific item row
             const itemTotalPrice = item.approved_quantity * (item.price_per_sapling || 0);
 
-            // BEFORE values
             const [beforeStock] = await connection.query(
                 `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
                  FROM productioncenter_stockdetails 
@@ -817,7 +816,6 @@ exports.orderPlaced = async (req, res) => {
 
             console.log(`Before Update (stock_id=${item.stock_id}):`, beforeStock);
 
-            // UPDATE: Decrement stock, Increment Sales Count and Sales Amount
             const [updateResult] = await connection.query(
                 `UPDATE productioncenter_stockdetails
                  SET 
@@ -827,17 +825,16 @@ exports.orderPlaced = async (req, res) => {
                     total_selled_price = total_selled_price + ?
                  WHERE id = ?`,
                 [
-                    item.approved_quantity,     // Decrease available
-                    item.approved_quantity,     // Decrease allocated
-                    item.approved_quantity,     // Increase total_selled count
-                    itemTotalPrice,             // Increase total_selled_price
+                    item.approved_quantity,
+                    item.approved_quantity,
+                    item.approved_quantity,
+                    itemTotalPrice,
                     item.stock_id
                 ]
             );
 
             console.log(`Update Result (stock_id=${item.stock_id}):`, updateResult);
 
-            // AFTER values
             const [afterStock] = await connection.query(
                 `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
                  FROM productioncenter_stockdetails 
@@ -1017,7 +1014,7 @@ exports.getFarmerRequestItemByStockId = async (req, res) => {
         FROM users_farmerrequestitem fri
         INNER JOIN users_farmerrequest fr ON fri.request_id = fr.id
         INNER JOIN tbl_agroforest_trees aft ON fri.species_id = aft.id
-        WHERE fri.stock_id = ? AND fri.status = 'approved'
+        WHERE fri.stock_id = ? AND fri.status = 'approved' AND fr.status= 'order-placed'
       `,
       [stock_id]
     );
@@ -1037,3 +1034,590 @@ exports.getFarmerRequestItemByStockId = async (req, res) => {
   }
 };
 
+
+exports.getDashboardCounts = async (req, res) => {
+    try {
+        // 1. Get data from Token (Logged in user)
+        const user = req.user || {}; 
+        
+        // 2. Get data from URL Query Params (For Postman Testing)
+        // We prioritize Query Params > Token Data
+        const role = req.query.role || user.role;
+        const department_id = req.query.department_id || user.department_id;
+        const district_id = req.query.district_id || user.district_id;
+        const block_id = req.query.block_id || user.block_id;
+
+        // ---------------------------------------------------------
+        // STRICT ROLE CHECK
+        // ---------------------------------------------------------
+        if (role) {
+            
+            // --- Sub-validations for specific roles ---
+            if (role === 'department_admin' && !department_id) {
+                return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+            }
+            if (role === 'district_admin' && !district_id) {
+                return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+            }
+            if (role === 'block_admin' && !block_id) {
+                return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
+            }
+
+            // ---------------------------------------------------------
+            // PREPARE DYNAMIC FILTERS
+            // ---------------------------------------------------------
+            let filterColumn = null;
+            let filterValue = null;
+
+            if (role === 'department_admin') {
+                filterColumn = 'department_id';
+                filterValue = department_id;
+            } else if (role === 'district_admin') {
+                filterColumn = 'district_id';
+                filterValue = district_id;
+            } else if (role === 'block_admin') {
+                filterColumn = 'block_id';
+                filterValue = block_id;
+            }
+            // If role is superadmin, filterColumn remains null (No filter applied)
+
+            // Helper for simple table counts
+            const getSimpleCount = async (tableName) => {
+                let query = `SELECT COUNT(*) as count FROM ${tableName}`;
+                let queryParams = [];
+                
+                if (filterColumn) {
+                    query += ` WHERE ${filterColumn} = ?`;
+                    queryParams.push(filterValue);
+                }
+                
+                const [rows] = await db.query(query, queryParams);
+                return rows[0]?.count || 0;
+            };
+
+            // Helper for User Role counts
+            const getUserRoleCount = async (targetRoleName) => {
+                let query = `
+                    SELECT COUNT(u.id) as count 
+                    FROM users_customuser u
+                    JOIN users_role r ON u.role_id = r.id
+                    WHERE r.name = ?
+                `;
+                let queryParams = [targetRoleName];
+
+                if (filterColumn) {
+                    query += ` AND u.${filterColumn} = ?`;
+                    queryParams.push(filterValue);
+                }
+
+                const [rows] = await db.query(query, queryParams);
+                return rows[0]?.count || 0;
+            };
+
+            // ---------------------------------------------------------
+            // FETCH DATA
+            // ---------------------------------------------------------
+            let data = {};
+
+            // A. DEPARTMENT ADMIN COUNT (Only Superadmin)
+            if (role === 'superadmin') {
+                data.department_admin_count = await getUserRoleCount('department_admin');
+            }
+
+            // B. DISTRICT ADMIN COUNT (Superadmin & Dept Admin)
+            if (['superadmin', 'department_admin'].includes(role)) {
+                data.district_admin_count = await getUserRoleCount('district_admin');
+            }
+
+            // C. BLOCK ADMIN COUNT (Superadmin, Dept Admin, Dist Admin)
+            if (['superadmin', 'department_admin', 'district_admin'].includes(role)) {
+                data.block_admin_count = await getUserRoleCount('block_admin');
+            }
+
+            // D. PRODUCTION CENTER COUNT (Visible to all)
+            if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
+                data.production_centers_count = await getSimpleCount('productioncenter_productioncenter');
+            }
+
+            // E. FARMER COUNT (Visible to all)
+            if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
+                data.farmers_count = await getSimpleCount('users_farmeraathardetails');
+            }
+
+            // F. SPECIES IN STOCK COUNT (Visible to all)
+            if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
+                let query = `
+                    SELECT COUNT(DISTINCT ps.species_id) as count 
+                    FROM productioncenter_stockdetails ps
+                    JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
+                `;
+                let queryParams = [];
+
+                if (filterColumn) {
+                    query += ` WHERE pc.${filterColumn} = ?`;
+                    queryParams.push(filterValue);
+                }
+
+                const [specRows] = await db.query(query, queryParams);
+                data.species_in_stock_count = specRows[0]?.count || 0;
+            }
+
+            // ---------------------------------------------------------
+            // SEND SUCCESS RESPONSE
+            // ---------------------------------------------------------
+            res.status(200).json({
+                success: true,
+                data: data
+            });
+
+        } else {
+            // ---------------------------------------------------------
+            // ERROR BLOCK (No Role Found)
+            // ---------------------------------------------------------
+            return res.status(400).json({
+                success: false,
+                error: "User role is required."
+            });
+        }
+
+    } catch (err) {
+        console.error("❌ Dashboard Count Error:", err);
+        res.status(500).json({ 
+            success: false, 
+            error: "Failed to fetch dashboard counts",
+            details: err.message 
+        });
+    }
+};
+
+exports.getWeeklyFarmerRequestReport = async (req, res) => {
+    try {
+        // 1. Get Date, Role, and Scope Params
+        const { start_date, end_date, role, department_id, district_id, block_id } = req.query;
+        
+        if (!start_date || !end_date) {
+            return res.status(400).json({
+                success: false,
+                error: "start_date and end_date are required"
+            });
+        }
+
+        // Convert DD/MM/YYYY to YYYY-MM-DD for MySQL
+        const formatDate = (dateStr) => {
+            const [day, month, year] = dateStr.split('/');
+            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        };
+
+        const startDate = formatDate(start_date);
+        const endDate = formatDate(end_date);
+
+        // 2. Build Query with Joins and Filters
+        const queryParams = [startDate, `${endDate} 23:59:59`];
+        
+        // Base Query - Join with productioncenter table to check scope
+        let query = `
+            SELECT 
+                DATE(fr.created_at) as report_date,
+                COUNT(*) as orders_count,
+                COUNT(DISTINCT fr.production_center_id) as production_centers_count,
+                SUM(CASE WHEN fr.status = 'pending' THEN 1 ELSE 0 END) as pending_count,
+                SUM(CASE WHEN fr.status = 'order-placed' THEN 1 ELSE 0 END) as order_placed_count,
+                SUM(CASE WHEN fr.status = 'billed' THEN 1 ELSE 0 END) as billed_count
+            FROM users_farmerrequest fr
+            LEFT JOIN productioncenter_productioncenter pc ON fr.production_center_id = pc.id
+            WHERE fr.created_at BETWEEN ? AND ?
+        `;
+
+        // Role-based Scope Filtering
+        if (role === 'department_admin' && department_id) {
+            query += ` AND pc.department_id = ?`;
+            queryParams.push(department_id);
+        } else if (role === 'district_admin' && district_id) {
+            query += ` AND pc.district_id = ?`;
+            queryParams.push(district_id);
+        } else if (role === 'block_admin' && block_id) {
+            query += ` AND pc.block_id = ?`;
+            queryParams.push(block_id);
+        }
+        // If role is superadmin or no scope params provided, no extra filter is added (shows all)
+
+        // Grouping and Ordering
+        query += ` GROUP BY DATE(fr.created_at) ORDER BY report_date`;
+
+        // 3. Execute Query
+        const [rows] = await db.query(query, queryParams);
+
+        // 4. Format Response
+        const reportData = rows.map(row => ({
+            date: row.report_date,
+            orders_count: row.orders_count || 0,
+            production_centers_count: row.production_centers_count || 0,
+            pending: row.pending_count || 0,
+            'order-placed': row.order_placed_count || 0,
+            billed: row.billed_count || 0
+        }));
+
+        res.status(200).json({
+            success: true,
+            start_date: start_date,
+            end_date: end_date,
+            data: reportData
+        });
+
+    } catch (err) {
+        console.error("❌ Weekly Report Error:", err);
+        res.status(500).json({ 
+            success: false, 
+            error: "Failed to fetch weekly report",
+            details: err.message 
+        });
+    }
+};
+
+exports.getProductionCentersList = async (req, res) => {
+    try {
+        console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
+        
+        // 1. Get user info for filtering
+        const { role, district_id, block_id } = req.user;
+        console.log("🔐 User Role:", role);
+
+        // 2. Construct Query
+        // We select center details and SUM the saplings_available from the stock table.
+        // LEFT JOIN ensures we show centers even if they have 0 stock.
+        let query = `
+            SELECT 
+                pc.id,
+                pc.name_of_production_centre,
+                pc.complete_address,
+                pc.status,
+                pc.production_type,
+                COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
+            FROM productioncenter_productioncenter pc
+            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+        `;
+
+        const params = [];
+
+        // 3. Apply Role-Based Filters
+        // These columns exist in the 'productioncenter_productioncenter' table
+        if (role === 'district_admin' && district_id) {
+            query += ` WHERE pc.district_id = ?`;
+            params.push(district_id);
+        } else if (role === 'block_admin' && block_id) {
+            query += ` WHERE pc.block_id = ?`;
+            params.push(block_id);
+        }
+        // Note: Superadmin or Department Admin gets no filter (sees all)
+
+        // 4. Group By is required for the SUM() function to work per center
+        query += ` GROUP BY pc.id`;
+
+        console.log("📝 SQL:", query);
+        console.log("📦 Params:", params);
+
+        // 5. Execute
+        const [rows] = await db.query(query, params);
+
+        console.log(`✅ Found ${rows.length} production centers.`);
+
+        res.status(200).json({
+            success: true,
+            data: rows
+        });
+
+    } catch (err) {
+        console.error("❌ Production Centers List Error:", err);
+        res.status(500).json({ 
+            success: false, 
+            error: "Failed to fetch production centers",
+            details: err.message 
+        });
+    }
+};
+
+exports.getTargetDetails = async (req, res) => {
+    try {
+        // 1. Get Data from Token & Query Params
+        const user = req.user || {};
+        
+        const role = req.query.role || user.role;
+        const target_level = req.query.target_level; // department, district, block, productioncenter
+        
+        const department_id = req.query.department_id || user.department_id;
+        const district_id = req.query.district_id || user.district_id;
+        const block_id = req.query.block_id || user.block_id;
+
+        // ---------------------------------------------------------
+        // 1. VALIDATION
+        // ---------------------------------------------------------
+        if (!target_level) {
+            return res.status(400).json({ success: false, error: "Query param 'target_level' is required." });
+        }
+
+        // Strict Role Checks (Ensure ID exists for the role)
+        if (role === 'department_admin' && !department_id) {
+            return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+        }
+        if (role === 'district_admin' && !district_id) {
+            return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+        }
+        if (role === 'block_admin' && !block_id) {
+            return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
+        }
+
+        // ---------------------------------------------------------
+        // 2. PREPARE QUERY VARIABLES
+        // ---------------------------------------------------------
+        let query = "";
+        let queryParams = [];
+        let whereClauses = []; // Collects WHERE conditions
+
+        // ---------------------------------------------------------
+        // 3. DYNAMIC QUERY BUILDER
+        // ---------------------------------------------------------
+
+        // A. TARGET LEVEL: DEPARTMENT
+        if (target_level === 'department') {
+            query = `
+                SELECT 
+                    td.id,
+                    td.target_tag,
+                    td.target_quantity,
+                    td.start_date,
+                    td.end_date,
+                    td.created_at,
+                    d.name AS department_name,
+                    u.username AS created_by_name
+                FROM target_department td
+                LEFT JOIN department d ON td.department_id = d.id
+                LEFT JOIN users_customuser u ON td.created_by = u.id
+            `;
+
+            // Filter Logic for Department Table
+            if (role === 'department_admin') {
+                whereClauses.push("td.department_id = ?");
+                queryParams.push(department_id);
+            }
+            // Superadmin sees all (No filter)
+
+        } 
+        
+        // B. TARGET LEVEL: DISTRICT
+        else if (target_level === 'district') {
+            query = `
+                SELECT 
+                    tdis.id,
+                    tdis.target_quantity,
+                    tdis.start_date,
+                    tdis.end_date,
+                    tdis.status,
+                    tdis.created_at,
+                    dis.District_Name AS district_name,
+                    u.username AS created_by_name
+                FROM target_district tdis
+                LEFT JOIN master_district dis ON tdis.district_id = dis.id
+                LEFT JOIN users_customuser u ON tdis.created_by = u.id
+            `;
+
+            // Filter Logic for District Table
+            if (role === 'department_admin') {
+                // As requested: Filter by department_id column in this table
+                whereClauses.push("tdis.target_department_id = ?");
+                queryParams.push(department_id);
+            } else if (role === 'district_admin') {
+                whereClauses.push("tdis.district_id = ?");
+                queryParams.push(district_id);
+            }
+
+        } 
+        
+        // C. TARGET LEVEL: BLOCK
+        else if (target_level === 'block') {
+            query = `
+                SELECT 
+                    tb.id,
+                    tb.target_quantity,
+                    tb.start_date,
+                    tb.end_date,
+                    tb.created_at,
+                    b.Block_Name AS block_name,
+                    u.username AS created_by_name
+                FROM target_block tb
+                LEFT JOIN master_block b ON tb.block_id = b.id
+                LEFT JOIN users_customuser u ON tb.created_by = u.id
+            `;
+
+            // Filter Logic for Block Table
+            if (role === 'department_admin') {
+                // Filter by department_id column in this table
+                whereClauses.push("tb.target_department_id = ?");
+                queryParams.push(department_id);
+            } else if (role === 'district_admin') {
+                whereClauses.push("tb.district_id = ?");
+                queryParams.push(district_id);
+            } else if (role === 'block_admin') {
+                whereClauses.push("tb.block_id = ?");
+                queryParams.push(block_id);
+            }
+
+        } 
+        
+        // D. TARGET LEVEL: PRODUCTION CENTER
+        else if (target_level === 'productioncenter') {
+            query = `
+                SELECT 
+                    tpc.id,
+                    tpc.target_quantity,
+                    tpc.start_date,
+                    tpc.end_date,
+                    tpc.created_at,
+                    pc.name_of_production_centre AS production_center_name,
+                    u.username AS created_by_name
+                FROM target_productioncenter tpc
+                LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
+                LEFT JOIN users_customuser u ON tpc.created_by = u.id
+            `;
+
+            // Filter Logic for Production Center Table
+            if (role === 'department_admin') {
+                // Filter by department_id column in this table
+                whereClauses.push("tpc.target_department_id = ?");
+                queryParams.push(department_id);
+            } else if (role === 'district_admin') {
+                whereClauses.push("tpc.district_id = ?");
+                queryParams.push(district_id);
+            } else if (role === 'block_admin') {
+                whereClauses.push("tpc.block_id = ?");
+                queryParams.push(block_id);
+            }
+
+        } else {
+            return res.status(400).json({ success: false, error: "Invalid target_level provided." });
+        }
+
+        // ---------------------------------------------------------
+        // 4. FINALIZE QUERY (Append WHERE clauses)
+        // ---------------------------------------------------------
+        if (whereClauses.length > 0) {
+            query += " WHERE " + whereClauses.join(" AND ");
+        }
+
+        // Execute
+        const [rows] = await db.query(query, queryParams);
+
+        res.status(200).json({
+            success: true,
+            count: rows.length,
+            data: rows
+        });
+
+    } catch (err) {
+        console.error("❌ Target Details Error:", err);
+        res.status(500).json({ success: false, error: "Server Error", details: err.message });
+    }
+};
+
+exports.getFarmerDetails = async (req, res) => {
+    try {
+        // 1. Get Data from Token & Query Params
+        const user = req.user || {};
+        
+        const role = req.query.role || user.role;
+        
+        // IDs can come from query params (for filtering) or the logged-in user's context
+        const department_id = req.query.department_id || user.department_id;
+        const district_id = req.query.district_id || user.district_id;
+        const block_id = req.query.block_id || user.block_id;
+
+        // ---------------------------------------------------------
+        // 2. VALIDATION
+        // ---------------------------------------------------------
+        
+        // Validate required IDs based on role
+        if (role === 'department_admin' && !department_id) {
+            return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+        }
+        if (role === 'district_admin' && !district_id) {
+            return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+        }
+        if (role === 'block_admin' && !block_id) {
+            return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
+        }
+
+        // ---------------------------------------------------------
+        // 3. PREPARE QUERY VARIABLES
+        // ---------------------------------------------------------
+        
+        // Selecting the required fields: farmerID, district name, block name, village name
+        // Added basic farmer details (name, type) for context
+        let query = `
+            SELECT 
+                f.id,
+                f.farmer_id,
+                f.name,
+                f.type,
+                md.District_Name AS district_name,
+                mb.Block_Name AS block_name,
+                mv.Village_Name AS village_name
+            FROM users_farmeraathardetails f
+            LEFT JOIN master_district md ON f.district_id = md.id
+            LEFT JOIN master_block mb ON f.block_id = mb.id
+            LEFT JOIN master_village mv ON f.village_id = mv.id
+        `;
+
+        let whereClauses = [];
+        let queryParams = [];
+
+        // ---------------------------------------------------------
+        // 4. DYNAMIC QUERY BUILDER (Role-Based Filtering)
+        // ---------------------------------------------------------
+
+        if (role === 'superadmin') {
+            // Superadmin: Show all data (No WHERE clauses needed)
+        } 
+        else if (role === 'department_admin') {
+            // Department Admin: Filter by department_id column in farmers table (Column 21)
+            whereClauses.push("f.department_id = ?");
+            queryParams.push(department_id);
+        } 
+        else if (role === 'district_admin') {
+            // District Admin: Filter by district_id
+            whereClauses.push("f.district_id = ?");
+            queryParams.push(district_id);
+        } 
+        else if (role === 'block_admin') {
+            // Block Admin: Filter by block_id
+            whereClauses.push("f.block_id = ?");
+            queryParams.push(block_id);
+        } 
+        else {
+            // Optional: Handle unknown roles or default behavior
+            // For now, returning empty if role is not recognized or unauthorized
+            return res.status(403).json({ success: false, error: "Unauthorized role access." });
+        }
+
+        // Append WHERE clauses if any exist
+        if (whereClauses.length > 0) {
+            query += " WHERE " + whereClauses.join(" AND ");
+        }
+
+        // Sort by latest entry
+        query += " ORDER BY f.id DESC";
+
+        // ---------------------------------------------------------
+        // 5. EXECUTE QUERY
+        // ---------------------------------------------------------
+        const [rows] = await db.query(query, queryParams);
+
+        res.status(200).json({
+            success: true,
+            count: rows.length,
+            data: rows
+        });
+
+    } catch (err) {
+        console.error("❌ Farmer Details Error:", err);
+        res.status(500).json({ success: false, error: "Server Error", details: err.message });
+    }
+};

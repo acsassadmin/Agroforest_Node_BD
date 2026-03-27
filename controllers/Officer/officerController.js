@@ -287,23 +287,9 @@ exports.getDesignation = async (req, res) => {
             "SELECT COUNT(*) AS total FROM designation"
         );
 
-        // Data query
-        const [rows] = await db.query(
-            "SELECT id, name FROM designation ORDER BY id DESC LIMIT ? OFFSET ?",
-            [limit, offset]
-        );
-
-        // Response
-        res.status(200).json({
-            success: true,
-            data: rows,              // 👈 always array
-            pagination: {
-                total,
-                page,
-                limit,
-                totalPages: Math.ceil(total / limit)
-            }
-        });
+        // RETURN ONLY THE ARRAY.
+        // Do not wrap it in { success: true, data: ... }
+        res.json(rows);
 
     } catch (err) {
         console.error("Get Designations Error:", err);

@@ -10,8 +10,6 @@ router.get('/:id', targetProductionCenterController.getTargetProductionCenterByI
 router.put('/:id', targetProductionCenterController.updateTargetProductionCenter);
 router.delete('/:id', targetProductionCenterController.deleteTargetProductionCenter);
 
-// Dropdowns
-router.get('/dropdown/productioncenters', targetProductionCenterController.getProductionCenters);
-router.get('/dropdown/departments', targetProductionCenterController.getTargetDepartments);
+
 
 module.exports = router;

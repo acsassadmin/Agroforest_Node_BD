@@ -22,6 +22,12 @@ router.get('/production-centers-nearby/', authenticateToken, prodController.getN
 
 //report
 router.get('/district-summary/', authenticateToken, prodController.getDistrictSummary);
+router.get('/districts/summary/', authenticateToken, prodController.getSingleDistrictSummary);
+
+router.get('/blocksummary/', prodController.getBlockSummary);
+router.get('/productioncenter-summary', prodController.getProductionCenterSummary);
+router.get('/single-productioncenter-summary', prodController.getSingleProductionCenterSummary);
+
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
 router.post('/distribution-centers/', authenticateToken, distController.createDistributionCenter);
@@ -30,7 +36,7 @@ router.delete('/distribution-centers/', authenticateToken, distController.delete
 
 // Stock Details
 router.get('/stock-details/', authenticateToken, stockController.getStockDetails);
-router.post('/stock-details/', authenticateToken, stockController.createStockDetail);
+router.post('/stock-details/', authenticateToken,stockController.uploadMiddleware, stockController.createStockDetail);
 router.put('/stock-details/', authenticateToken, stockController.updateStockDetail);
 router.delete('/stock-details/', authenticateToken, stockController.deleteStockDetail);
 
@@ -52,6 +58,7 @@ router.get('/production-centers/excel/', authenticateToken, stockController.down
 router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
 
 
+
 // GET ALL (uses same function as below)
 router.get('/schema/', authenticateToken, stockController.getScheme);
 router.get('/schema/:id', authenticateToken, stockController.getScheme);
@@ -60,4 +67,30 @@ router.put('/schema/:id', authenticateToken, stockController.updateScheme);
 router.delete('/schema/:id', authenticateToken, stockController.deleteScheme);
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 module.exports = router;
+
+
+
+
+
+
+
+
+
+
