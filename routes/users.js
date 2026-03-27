@@ -30,4 +30,15 @@ router.get('/dashboard/top-centers', authenticateToken, userController.getTopPro
 router.get('/dashboard/district-saplings', authenticateToken, userController.getSaplingsDistrictWise);
 // Map Data
 router.get('/production-centers/map', authenticateToken, userController.getProductionCentersForMap);
+
+
+// ----------------Dashboards--------------
+router.get('/dashboard-counts/', authenticateToken, userController.getDashboardCounts);
+router.get('/farmer-request-weekly-report/', authenticateToken, userController.getWeeklyFarmerRequestReport);
+router.get('/production-centers', authenticateToken, userController.getProductionCentersList);
+router.get('/target-details/', authenticateToken, userController.getTargetDetails);
+router.get('/farmer-details/', authenticateToken, userController.getFarmerDetails);
+
+
+
 module.exports = router;
