@@ -268,36 +268,24 @@ exports.deleteDepartment = async (req, res) => {
 
 // GET all designations
 exports.getDesignation = async (req, res) => {
-    try {
-        // Pagination params
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        const offset = (page - 1) * limit;
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
 
-        // Validate
-        if (page < 1 || limit < 1) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid pagination values"
-            });
-        }
-
-        // Total count
-        const [[{ total }]] = await db.query(
-            "SELECT COUNT(*) AS total FROM designation"
-        );
-
-        // RETURN ONLY THE ARRAY.
-        // Do not wrap it in { success: true, data: ... }
-        res.json(rows);
-
-    } catch (err) {
-        console.error("Get Designations Error:", err);
-        res.status(500).json({
-            success: false,
-            message: err.message
-        });
+    if (page < 1 || limit < 1) {
+      return res.status(400).json({ success: false, message: "Invalid pagination values" });
     }
+
+    const [[{ total }]] = await db.query("SELECT COUNT(*) AS total FROM designation");
+    const [rows] = await db.query("SELECT id, name FROM designation ORDER BY id DESC LIMIT ? OFFSET ?", [limit, offset]);
+
+    // include pagination meta if you want, otherwise return rows only (you previously asked to return array only)
+    res.json(rows);
+  } catch (err) {
+    console.error("Get Designations Error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
 };
 // CREATE designation
 exports.createDesignation = async (req, res) => {
