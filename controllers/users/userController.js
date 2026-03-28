@@ -64,19 +64,20 @@ exports.verifyOtp = async (req, res) => {
         }
 
         const insertQuery = `
-            INSERT INTO users_customuser 
-            (username, email, password, phone, role_id, is_active) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        `;
-        
-        await db.query(insertQuery, [
-            cachedData.username,
-            cachedData.email,
-            cachedData.password,
-            cachedData.phone,
-            cachedData.role_id,
-            true
-        ]);
+INSERT INTO users_customuser
+(username, email, password, phone, role_id, is_active, is_superuser, first_name, date_joined)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+`;
+await db.query(insertQuery, [
+cachedData.username,
+cachedData.email,
+cachedData.password,
+cachedData.phone,
+cachedData.role_id,
+true,
+false,
+null
+]);
         console.log(cachedData.role_id , "roleeee")
         await redisClient.del(`register_${email}`);
 
@@ -600,10 +601,7 @@ try {
 } catch (cacheErr) {
   console.error("Cache clearing error:", cacheErr);
 }
-
-
     res.json({ message: "Updated successfully" });
-
   } catch (err) {
     await connection.rollback();
     console.error("Approve Item Error:", err);
@@ -612,21 +610,20 @@ try {
     connection.release();
   }
 };
+
+
 exports.getCenterOrders = async (req, res) => {
     try {
         const { production_center_id, user_id, limit, offset } = req.query;
 
-        // Log incoming query params for debugging
         console.log("👉 Incoming Query Params:", req.query);
 
-        // ✅ At least one filter required
         if (!production_center_id && !user_id) {
             return res.status(400).json({
                 error: "Either production_center_id or user_id is required"
             });
         }
 
-        // ✅ Dynamic WHERE clause
         let whereConditions = [];
         let params = [];
 
@@ -644,10 +641,6 @@ exports.getCenterOrders = async (req, res) => {
             ? `WHERE ${whereConditions.join(" AND ")}`
             : "";
 
-        console.log("👉 WHERE Clause:", whereClause);
-        console.log("👉 Params:", params);
-
-        // Handle pagination (limit and offset)
         let limitValue = limit ? parseInt(limit) : undefined;
         let offsetValue = offset ? parseInt(offset) : undefined;
         
@@ -657,7 +650,7 @@ exports.getCenterOrders = async (req, res) => {
         const limitClause = limitValue ? `LIMIT ?` : "";
         const offsetClause = offsetValue ? `OFFSET ?` : "";
 
-        // 1. Fetch raw flat data
+        // Use DESC for Newest first, or ASC for Oldest first
         const query = `
             SELECT 
                 fr.id as request_id,
@@ -684,21 +677,15 @@ exports.getCenterOrders = async (req, res) => {
             ${limitClause} ${offsetClause}
         `;
 
-        // Log final query and parameters
-        console.log("👉 Final Query:", query);
-        console.log("👉 Params for query:", [...params, limitValue, offsetValue]);
+        const queryParams = [...params, limitValue, offsetValue].filter(v => v !== undefined);
+        const [rows] = await db.query(query, queryParams);
 
-        // Execute the query with sanitized parameters
-        const [rows] = await db.query(query, [...params, limitValue, offsetValue].filter(Boolean));
-
-        console.log("👉 Raw DB Rows Count:", rows.length);
-
-        // 2. Group orders by request_id
-        const ordersMap = {};
+        // ✅ FIXED: Using Map to preserve the SQL Sort Order
+        const ordersMap = new Map();
 
         rows.forEach(row => {
-            if (!ordersMap[row.request_id]) {
-                ordersMap[row.request_id] = {
+            if (!ordersMap.has(row.request_id)) {
+                ordersMap.set(row.request_id, {
                     request_id: row.request_id,
                     orderid: row.orderid,
                     order_status: row.order_status,
@@ -707,11 +694,11 @@ exports.getCenterOrders = async (req, res) => {
                     farmer_mobile: row.farmer_mobile,
                     farmer_code: row.farmer_code,
                     requested_items: []
-                };
+                });
             }
 
             if (row.item_id) {
-                ordersMap[row.request_id].requested_items.push({
+                ordersMap.get(row.request_id).requested_items.push({
                     item_id: row.item_id,
                     stock_id: row.stock_id,
                     species_id: row.species_id,
@@ -724,12 +711,9 @@ exports.getCenterOrders = async (req, res) => {
             }
         });
 
-        const results = Object.values(ordersMap);
+        // Convert Map back to array (stays in order)
+        const results = Array.from(ordersMap.values());
 
-        // Log the final response count after grouping
-        console.log("👉 Final Results Count After Grouping:", results.length);
-
-        // Return the grouped results
         res.json({
             count: results.length,
             results
@@ -740,6 +724,7 @@ exports.getCenterOrders = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
 
 
 exports.getTnSchemas = async (req, res) => {
@@ -1295,16 +1280,19 @@ exports.getProductionCentersList = async (req, res) => {
         // We select center details and SUM the saplings_available from the stock table.
         // LEFT JOIN ensures we show centers even if they have 0 stock.
         let query = `
-            SELECT 
-                pc.id,
-                pc.name_of_production_centre,
-                pc.complete_address,
-                pc.status,
-                pc.production_type,
-                COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
-            FROM productioncenter_productioncenter pc
-            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-        `;
+  SELECT 
+    pc.id,
+    pc.name_of_production_centre,
+    pc.complete_address,
+    pc.status,
+    pc.district_id,
+    md.District_Name AS District_Name,
+    pc.production_type,
+    COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
+  FROM productioncenter_productioncenter pc
+  LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+  LEFT JOIN master_district md ON pc.district_id = md.id
+`;
 
         const params = [];
 
@@ -1630,3 +1618,58 @@ exports.getFarmerDetails = async (req, res) => {
         res.status(500).json({ success: false, error: "Server Error", details: err.message });
     }
 };
+
+
+// production-center dahsboard =---------------------
+exports.getProductionCenterStats = async (req, res) => {
+    try {
+        const { production_center_id } = req.query;
+
+        // Using a Subquery approach to ensure Target and Counts are 100% accurate
+        let query = `
+            SELECT 
+                tpc.productioncenter_id,
+                tpc.target_quantity,
+                COALESCE(counts.order_placed_count, 0) AS order_placed_count,
+                COALESCE(counts.billed_count, 0) AS billed_count,
+                COALESCE(counts.pending_count, 0) AS pending_count
+            FROM target_productioncenter tpc
+            LEFT JOIN (
+                SELECT 
+                    production_center_id,
+                    COUNT(CASE WHEN status = 'order-placed' THEN 1 END) as order_placed_count,
+                    COUNT(CASE WHEN status = 'billed' THEN 1 END) as billed_count,
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count
+                FROM users_farmerrequest
+                GROUP BY production_center_id
+            ) counts ON tpc.productioncenter_id = counts.production_center_id
+        `;
+
+        let queryParams = [];
+
+        if (production_center_id) {
+            query += ` WHERE tpc.productioncenter_id = ?`;
+            queryParams.push(production_center_id);
+        }
+
+        query += ` ORDER BY tpc.productioncenter_id ASC`;
+
+        const [rows] = await db.query(query, queryParams);
+
+        res.status(200).json({
+            success: true,
+            count: rows.length,
+            data: rows
+        });
+
+    } catch (err) {
+        console.error("❌ Stats Error:", err);
+        res.status(500).json({ 
+            success: false, 
+            error: "Failed to fetch production center stats",
+            details: err.message 
+        });
+    }
+};
+
+

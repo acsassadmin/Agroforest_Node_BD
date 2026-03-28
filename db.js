@@ -8,7 +8,7 @@ const pool = mysql.createPool({
   password: '',
   database: 'agroforest',
   waitForConnections: true,
-    port: 3307, 
+    port: 3306, 
   connectionLimit: 10,
   queueLimit: 0
 });

@@ -32,12 +32,16 @@ router.get('/dashboard/district-saplings', authenticateToken, userController.get
 router.get('/production-centers/map', authenticateToken, userController.getProductionCentersForMap);
 
 
-// ----------------Dashboards--------------
+// ----------------Officer Dashboards--------------
 router.get('/dashboard-counts/', authenticateToken, userController.getDashboardCounts);
 router.get('/farmer-request-weekly-report/', authenticateToken, userController.getWeeklyFarmerRequestReport);
 router.get('/production-centers', authenticateToken, userController.getProductionCentersList);
 router.get('/target-details/', authenticateToken, userController.getTargetDetails);
 router.get('/farmer-details/', authenticateToken, userController.getFarmerDetails);
+
+// ----------------Production center Dashboards--------------
+
+router.get('/production-counts/', authenticateToken, userController.getProductionCenterStats);
 
 
 

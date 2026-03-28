@@ -55,7 +55,7 @@ exports.getStockDetails = async (req, res) => {
 
         // 1. Cache Key
         const cacheKey = `stock_details_${production_center_id || 'all'}_${species_id || 'sim'}_${species_name || 'sna'}_page${page}_lat${latitude || 'x'}_lng${longitude || 'x'}`;
-        //  await redisClient.del(cacheKey); 
+         await redisClient.del(cacheKey); 
         const cachedData = await redisClient.get(cacheKey);
         if (cachedData) return res.json(JSON.parse(cachedData));
 
@@ -164,41 +164,35 @@ exports.createStockDetail = async (req, res) => {
     try {
         console.log("🔥 Incoming Request Body:", req.body);
         console.log("📸 Incoming Files:", req.files);
-
-        // 1. Parse the FormData structure
-        // Frontend sends: items[0][species_id], items[0][image], etc.
-        // We need to convert this flat object into an array of objects.
         
-        const itemsMap = {};
+       let data = [];
 
-        // Parse text fields
-        for (const key in req.body) {
-            // Regex to match 'items[0][fieldname]'
-            const match = key.match(/items\[(\d+)\]\[(\w+)\]/);
-            if (match) {
-                const index = match[1];
-                const field = match[2];
-                if (!itemsMap[index]) itemsMap[index] = {};
-                itemsMap[index][field] = req.body[key];
-            }
+// If items is already an array (as seen in your console log)
+if (Array.isArray(req.body.items)) {
+    data = req.body.items;
+} 
+// If it's a JSON string (sometimes happens with multipart)
+else if (typeof req.body.items === 'string') {
+    try {
+        data = JSON.parse(req.body.items);
+    } catch (e) {
+        console.error("JSON Parse Error:", e);
+    }
+}
+
+// Attach files if any exist
+if (req.files && req.files.length > 0) {
+    req.files.forEach((file, index) => {
+        // Try to match the index from fieldname like 'items[0][image]'
+        const match = file.fieldname.match(/items\[(\d+)\]/);
+        const itemIndex = match ? parseInt(match[1]) : index;
+        
+        if (data[itemIndex]) {
+            data[itemIndex].image_path = file.path;
+            data[itemIndex].image_file = file.filename;
         }
-
-        // Parse files
-        if (req.files) {
-            req.files.forEach(file => {
-                // Regex to match 'items[0][image]'
-                const match = file.fieldname.match(/items\[(\d+)\]\[image\]/);
-                if (match) {
-                    const index = match[1];
-                    if (!itemsMap[index]) itemsMap[index] = {};
-                    // Store the relative path or filename
-                    itemsMap[index].image_file = file.filename; 
-                    itemsMap[index].image_path = file.path;
-                }
-            });
-        }
-
-        const data = Object.values(itemsMap);
+    });
+}
         console.log("📦 Parsed Data Array:", data);
 
         if (data.length === 0) {
@@ -241,7 +235,7 @@ exports.createStockDetail = async (req, res) => {
 
             // Insert Payload
             const insertPayload = [
-                item.production_center,
+                item.production_center_id,
                 item.species_id,
                 item.saplings_available,
                 item.allocated_quantity || 0,
