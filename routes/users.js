@@ -9,6 +9,8 @@ const authenticateToken = require('../middleware/authMiddleware'); // Import Mid
 router.post('/register/', userController.register);
 router.post('/verify-otp/', userController.verifyOtp);
 router.post('/login/', userController.login);
+router.post('/reset-password/', userController.resetPassword);
+router.post('/forgot-password/', userController.forgotPassword);
 router.post('/refresh/', userController.refreshToken);
 router.get('/roles/', userController.getRoles); 
 
@@ -42,6 +44,10 @@ router.get('/farmer-details/', authenticateToken, userController.getFarmerDetail
 // ----------------Production center Dashboards--------------
 
 router.get('/production-counts/', authenticateToken, userController.getProductionCenterStats);
+router.get('/production-saplings/', authenticateToken, userController.getProductionCenterSaplings);
+router.get('/production-monthly-sales/', authenticateToken, userController.getMonthlyTotalSales);
+
+
 
 
 

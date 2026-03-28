@@ -5,91 +5,125 @@ const NodeCache = require("node-cache");
 
 const sendOtpEmail = require('../../utils/mailer');
 const redisClient = require('../../redisClient');
-
+const sendOtpSms = require('../../utils/sendSms');
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const cache = new NodeCache({ stdTTL: 180 }); 
 
 // ===================== AUTH =====================
 
 // REGISTER (SEND OTP)
 exports.register = async (req, res) => {
-    try {
-        const { username, password, email, phone, role } = req.body;
-        console.log(username,"user" , password,"user" , email,"user" , phone,"user" , role);
-        const [existingUsers] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
-        if (existingUsers.length > 0) {
-            return res.status(400).json({ message: 'User with this email already exists.' });
-        }
-
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        const userData = {
-            username,
-            email,
-            password: hashedPassword,
-            phone: phone || null,
-            role_id: role,
-            otp: otp
-        };
-
-        await redisClient.set(`register_${email}`, JSON.stringify(userData), { EX: 600 });
-        await sendOtpEmail(email, otp);
-
-        res.status(200).json({ 
-            message: "OTP sent to email", 
-            otp: otp 
-        });
-
-    } catch (err) {
-        console.error("Registration Error:", err);
-        res.status(500).json({ error: err.message });
+  try {
+    // 1. Destructure Email along with other fields
+    const { username, password, phone, role, email } = req.body;
+    
+    // 2. Validate required fields
+    if (!phone || !password || !email) {
+      return res.status(400).json({ message: 'Phone, Password, and Email are required' });
     }
+
+    // 3. Normalize & validate phone
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    const e164 = pn.number; // e.g., +919789754800
+
+    // 4. Check if user exists by Phone
+    const [existingPhone] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
+    if (existingPhone.length > 0) {
+      return res.status(400).json({ message: 'User with this phone already exists.' });
+    }
+
+    // 5. Check if user exists by Email (New Check)
+    const [existingEmail] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
+    if (existingEmail.length > 0) {
+      return res.status(400).json({ message: 'User with this email already exists.' });
+    }
+
+    // 6. Generate OTP and hashed password
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 7. Include Email in the pending object
+    const pending = { 
+      username, 
+      phone: e164, 
+      email, // Added Email
+      password: hashedPassword, 
+      role_id: role, 
+      otp 
+    };
+
+    // 8. Store in Redis with 10 min TTL
+    await redisClient.set(`register_${e164}`, JSON.stringify(pending), { EX: 600 });
+
+    // 9. Send SMS (uncomment when ready)
+    // await sendOtpSms(e164, otp);
+
+    return res.status(200).json({ message: 'OTP sent to phone', "otp": otp });
+  } catch (err) {
+    console.error('Registration Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 // VERIFY OTP
 exports.verifyOtp = async (req, res) => {
-    try {
-        const { email, otp } = req.body;
+  try {
+    const { phone, otp } = req.body;
+    if (!phone || !otp) return res.status(400).json({ message: 'Phone and OTP required' });
 
-        const cachedDataString = await redisClient.get(`register_${email}`);
+    // 1. Normalize Phone
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    const e164 = pn.number; 
 
-        if (!cachedDataString) {
-            return res.status(400).json({ message: 'OTP expired or invalid request. Please register again.' });
-        }
-
-        const cachedData = JSON.parse(cachedDataString);
-
-        if (cachedData.otp !== otp) {
-            return res.status(400).json({ message: 'Invalid OTP' });
-        }
-
-        const insertQuery = `
-INSERT INTO users_customuser
-(username, email, password, phone, role_id, is_active, is_superuser, first_name, date_joined)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-`;
-await db.query(insertQuery, [
-cachedData.username,
-cachedData.email,
-cachedData.password,
-cachedData.phone,
-cachedData.role_id,
-true,
-false,
-null
-]);
-        console.log(cachedData.role_id , "roleeee")
-        await redisClient.del(`register_${email}`);
-
-        res.status(201).json({ message: "User registered successfully" });
-
-    } catch (err) {
-        console.error("Verify OTP Error:", err);
-        if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(400).json({ message: 'User already exists.' });
-        }
-        res.status(500).json({ error: err.message });
+    // 2. Get Cached Data from Redis
+    const cachedDataString = await redisClient.get(`register_${e164}`);
+    if (!cachedDataString) {
+      return res.status(400).json({ message: 'OTP expired or invalid request. Please register again.' });
     }
+
+    const cachedData = JSON.parse(cachedDataString);
+
+    // 3. Verify OTP
+    if (cachedData.otp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    // 4. Insert into Database
+    // COLUMNS: username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined
+    // COUNT: 9 Columns
+    
+    const insertQuery = `
+      INSERT INTO users_customuser
+        (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `;
+    // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
+
+    await db.query(insertQuery, [
+      cachedData.username,   // 1. ?
+      cachedData.phone,      // 2. ?
+      cachedData.email,      // 3. ?
+      cachedData.password,   // 4. ?
+      cachedData.role_id,    // 5. ?
+      true,                  // 6. ?
+      false,                 // 7. ?
+      null                   // 8. ? (This is for first_name)
+                             // 9. CURRENT_TIMESTAMP is handled by SQL
+    ]);
+    
+    // 5. Cleanup Redis
+    await redisClient.del(`register_${e164}`);
+    res.status(201).json({ message: "User registered successfully" });
+    
+  } catch (err) {
+    console.error("Verify OTP Error:", err);
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ message: 'User already exists.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.login = async (req, res) => {
@@ -167,6 +201,97 @@ exports.login = async (req, res) => {
 exports.refreshToken = async (req, res) => {
     res.status(501).json({ message: "Refresh token logic not implemented yet" });
 };
+
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ message: 'Phone number is required' });
+    console.log(phone,"phone")
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    console.log('Input Phone:', phone, 'Parsed Result:', pn);
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    const e164 = pn.number;
+
+    // Check if user exists
+    const [users] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found with this phone number' });
+    }
+
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Store in Redis with 10 min TTL (Key: reset_<phone>)
+    await redisClient.set(`reset_${e164}`, otp, { EX: 600 });
+
+    // Send SMS
+    // await sendOtpSms(e164, otp);
+
+    return res.status(200).json({ message: 'OTP sent to phone', otp }); // 'otp' returned for testing, remove in prod
+  } catch (err) {
+    console.error('Forgot Password Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// 2. RESET PASSWORD (Verify OTP & Set New Password)
+exports.resetPassword = async (req, res) => {
+  try {
+    const { phone, otp, newPassword } = req.body;
+    
+    if (!phone || !otp || !newPassword) {
+      return res.status(400).json({ message: 'Phone, OTP, and New Password are required' });
+    }
+
+    // FIX 1: Add 'IN' as the second argument to handle local numbers like 978...
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    
+    const e164 = pn.number; // e.g., +919789754800
+    const national = pn.nationalNumber; // e.g., 9789754800
+
+    // FIX 2: Find the user in DB to get their EXACT stored phone number.
+    // This ensures we check Redis with the correct key (matches forgotPassword logic).
+    const [users] = await db.query(
+      'SELECT phone FROM users_customuser WHERE phone = ? OR phone = ?', 
+      [e164, national]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const storedPhone = users[0].phone; // This is the key used in Redis
+
+    // Check Redis for OTP using the exact phone string from DB
+    const storedOtp = await redisClient.get(`reset_${storedPhone}`);
+    
+    if (!storedOtp) {
+      return res.status(400).json({ message: 'OTP expired. Please request a new one.' });
+    }
+
+    if (storedOtp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update User in DB
+    await db.query('UPDATE users_customuser SET password = ? WHERE phone = ?', [hashedPassword, storedPhone]);
+
+    // Delete OTP from Redis to prevent reuse
+    await redisClient.del(`reset_${storedPhone}`);
+
+    return res.status(200).json({ message: 'Password reset successfully' });
+  } catch (err) {
+    console.error('Reset Password Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 
 // ===================== ROLE =====================
 
@@ -605,15 +730,15 @@ try {
 
 exports.getCenterOrders = async (req, res) => {
     try {
-        const { production_center_id, user_id, limit, offset } = req.query;
+        const { production_center_id, user_id,status, limit, offset } = req.query;
 
         console.log("👉 Incoming Query Params:", req.query);
 
-        if (!production_center_id && !user_id) {
-            return res.status(400).json({
-                error: "Either production_center_id or user_id is required"
-            });
-        }
+        // if (!production_center_id && !user_id) {
+        //     return res.status(400).json({
+        //         error: "Either production_center_id or user_id is required"
+        //     });
+        // }
 
         let whereConditions = [];
         let params = [];
@@ -627,7 +752,18 @@ exports.getCenterOrders = async (req, res) => {
             whereConditions.push(`fr.created_by_id = ?`);
             params.push(user_id);
         }
-
+        if (status) {
+      // support comma-separated list or single status
+      const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+      if (statuses.length === 1) {
+        whereConditions.push(`fr.status = ?`);
+        params.push(statuses[0]);
+      } else if (statuses.length > 1) {
+        const placeholders = statuses.map(() => '?').join(',');
+        whereConditions.push(`fr.status IN (${placeholders})`);
+        params.push(...statuses);
+      }
+    }
         const whereClause = whereConditions.length
             ? `WHERE ${whereConditions.join(" AND ")}`
             : "";
@@ -1612,55 +1748,115 @@ exports.getFarmerDetails = async (req, res) => {
 
 
 // production-center dahsboard =---------------------
+
 exports.getProductionCenterStats = async (req, res) => {
-    try {
-        const { production_center_id } = req.query;
+  try {
+    const { production_center_id } = req.query;
+    const pid = production_center_id ?? null;
 
-        // Using a Subquery approach to ensure Target and Counts are 100% accurate
-        let query = `
-            SELECT 
-                tpc.productioncenter_id,
-                tpc.target_quantity,
-                COALESCE(counts.order_placed_count, 0) AS order_placed_count,
-                COALESCE(counts.billed_count, 0) AS billed_count,
-                COALESCE(counts.pending_count, 0) AS pending_count
-            FROM target_productioncenter tpc
-            LEFT JOIN (
-                SELECT 
-                    production_center_id,
-                    COUNT(CASE WHEN status = 'order-placed' THEN 1 END) as order_placed_count,
-                    COUNT(CASE WHEN status = 'billed' THEN 1 END) as billed_count,
-                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count
-                FROM users_farmerrequest
-                GROUP BY production_center_id
-            ) counts ON tpc.productioncenter_id = counts.production_center_id
-        `;
+    const query = `
+      SELECT
+        u.production_center_id,
+        COALESCE(tpc.target_quantity, 0) AS target_quantity,
+        COALESCE(tpc.start_date, NULL) AS start_date,
+        COALESCE(tpc.end_date, NULL) AS end_date,
+        COALESCE(cu.username, NULL) AS created_by_name,
+        COALESCE(SUM(status IN ('order-placed','order-billed')), 0) AS order_placed_count,
+        COALESCE(SUM(status = 'billed'), 0) AS billed_count,
+        COALESCE(SUM(status = 'pending'), 0) AS pending_count
+      FROM users_farmerrequest u
+      LEFT JOIN target_productioncenter tpc
+        ON tpc.productioncenter_id = u.production_center_id
+      LEFT JOIN users_customuser cu
+        ON tpc.created_by = cu.id
+      WHERE (? IS NULL OR u.production_center_id = ?)
+      GROUP BY u.production_center_id, tpc.target_quantity, tpc.start_date, tpc.end_date, cu.username
+      ORDER BY u.production_center_id ASC;
+    `;
 
-        let queryParams = [];
+    const params = [pid, pid];
+    console.log('getProductionCenterStats params:', params);
 
-        if (production_center_id) {
-            query += ` WHERE tpc.productioncenter_id = ?`;
-            queryParams.push(production_center_id);
-        }
+    const [rows] = await db.query(query, params);
+    console.log('getProductionCenterStats rows:', rows);
 
-        query += ` ORDER BY tpc.productioncenter_id ASC`;
-
-        const [rows] = await db.query(query, queryParams);
-
-        res.status(200).json({
-            success: true,
-            count: rows.length,
-            data: rows
-        });
-
-    } catch (err) {
-        console.error("❌ Stats Error:", err);
-        res.status(500).json({ 
-            success: false, 
-            error: "Failed to fetch production center stats",
-            details: err.message 
-        });
-    }
+    res.status(200).json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    console.error("❌ Stats Error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch production center stats", details: err.message });
+  }
 };
+
+
+
+exports.getProductionCenterSaplings = async (req, res) => {
+  try {
+    const { production_center_id } = req.query;
+    const pid = production_center_id ?? null;
+
+    const query = `
+      SELECT
+        ps.species_id,
+        t.name,
+        ps.saplings_available,
+        ps.sapling_age
+      FROM productioncenter_stockdetails ps
+      LEFT JOIN tbl_agroforest_trees t
+        ON ps.species_id = t.id
+      WHERE (? IS NULL OR ps.production_center_id = ?)
+      ORDER BY ps.species_id ASC;
+    `;
+
+    const params = [pid, pid];
+    const [rows] = await db.query(query, params);
+
+    res.status(200).json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    console.error("❌ Saplings Error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch sapling details", details: err.message });
+  }
+};
+
+
+exports.getMonthlyTotalSales = async (req, res) => {
+  try {
+    const { production_center_id, year } = req.query;
+    const pid = production_center_id ?? null;
+    const yy = year ? Number(year) : new Date().getFullYear();
+
+    const query = `
+      SELECT
+        MONTH(ps.updated_at) AS month,
+        SUM(COALESCE(ps.total_selled,0)) AS total_selled,
+        SUM(COALESCE(ps.total_selled_price,0.00)) AS total_selled_price
+      FROM productioncenter_stockdetails ps
+      WHERE (? IS NULL OR ps.production_center_id = ?)
+        AND YEAR(ps.updated_at) = ?
+      GROUP BY MONTH(ps.updated_at)
+      ORDER BY MONTH(ps.updated_at);
+    `;
+
+    const params = [pid, pid, yy];
+    const [rows] = await db.query(query, params);
+
+    // Build full months 1..12 with zeros where missing
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      const r = rows.find(rr => Number(rr.month) === m);
+      return {
+        month: m,
+        total_selled: r ? Number(r.total_selled) : 0,
+        total_selled_price: r ? Number(r.total_selled_price) : 0
+      };
+    });
+
+    res.status(200).json({ success: true, year: yy, count: months.length, data: months });
+  } catch (err) {
+    console.error("❌ Monthly Total Sales Error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch monthly total sales", details: err.message });
+  }
+};
+
+
 
 
