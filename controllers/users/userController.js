@@ -40,26 +40,43 @@ exports.register = async (req, res) => {
     }
 
     // 6. Generate OTP and hashed password
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // 7. Include Email in the pending object
-    const pending = { 
-      username, 
-      phone: e164, 
-      email, // Added Email
-      password: hashedPassword, 
-      role_id: role, 
-      otp 
-    };
+    // const pending = { 
+    //   username, 
+    //   phone: e164, 
+    //   email, // Added Email
+    //   password: hashedPassword, 
+    //   role_id: role, 
+    //   otp 
+    // };
+    const insertQuery = `
+      INSERT INTO users_customuser
+        (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `;
+    // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
 
+    await db.query(insertQuery, [
+      username,   // 1. ?
+      phone,      // 2. ?
+      email,      // 3. ?
+      hashedPassword,   // 4. ?
+      role,    // 5. ?
+      true,                  // 6. ?
+      false,                 // 7. ?
+      null                   // 8. ? (This is for first_name)
+                             // 9. CURRENT_TIMESTAMP is handled by SQL
+    ]);
     // 8. Store in Redis with 10 min TTL
-    await redisClient.set(`register_${e164}`, JSON.stringify(pending), { EX: 600 });
+    // await redisClient.set(`register_${e164}`, JSON.stringify(pending), { EX: 600 });
 
     // 9. Send SMS (uncomment when ready)
     // await sendOtpSms(e164, otp);
 
-    return res.status(200).json({ message: 'OTP sent to phone', "otp": otp });
+    return res.status(200).json({ message: 'OTP sent to phone' });
   } catch (err) {
     console.error('Registration Error:', err);
     return res.status(500).json({ error: err.message });

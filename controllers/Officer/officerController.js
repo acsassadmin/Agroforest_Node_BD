@@ -9,41 +9,44 @@ exports.getOfficers = async (req, res) => {
         // We also use CASE to convert Gender ID (1/2) to String (Male/Female).
         
         const query = `
-            SELECT 
-                od.id,
-                od.\`officer name\` as officerName,
-                
-                -- Convert Gender ID to Name
-                CASE od.Gender 
-                    WHEN 1 THEN 'Male' 
-                    WHEN 2 THEN 'Female' 
-                    ELSE 'Other' 
-                END as gender,
-                
-                od.Mobile as mobile,
-                od.Email as email,
-                
-                -- Get Names from related tables using aliases
-                d.name as department,
-                des.name as designation,
-                r.name as role,
-                u.username as username
-                
-            FROM officer_details od
-            
-            -- Join with Departments Table (Assuming table name is 'departments')
-            LEFT JOIN department d ON od.Department = d.id
-            
-            -- Join with Designations Table (Assuming table name is 'designations')
-            LEFT JOIN designation des ON od.Designation = des.id
-            
-            -- Join with Roles Table
-            LEFT JOIN users_role r ON od.role = r.id
-            
-            -- Join with Users Table to get the actual username string
-            LEFT JOIN users_customuser u ON od.Username = u.id
-        `;
+    SELECT 
+        od.id,
+        od.\`officer name\` as officerName,
+        
+        -- Convert Gender ID to Name
+        CASE od.Gender 
+            WHEN 1 THEN 'Male' 
+            WHEN 2 THEN 'Female' 
+            ELSE 'Other' 
+        END as gender,
+        
+        od.Mobile as mobile,
+        od.Email as email,
+        
+        -- Get Names from related tables
+        d.name as department,
+        des.name as designation,
+        r.name as role,
+        u.username as username,
 
+        -- 1. Get the creation timestamp
+        od.created_at,
+
+        -- 2. Get the Creator's Name 
+        -- We assume 'created_by' in officer_details holds the ID of the user who created it.
+        -- We join users_customuser again with an alias 'creator' to fetch their username.
+        creator.username as created_by
+       
+    FROM officer_details od
+    
+    LEFT JOIN department d ON od.Department = d.id
+    LEFT JOIN designation des ON od.Designation = des.id
+    LEFT JOIN users_role r ON od.role = r.id
+    LEFT JOIN users_customuser u ON od.Username = u.id
+    
+    -- 3. New Join: Link the 'created_by' ID to the users table to get the name
+    LEFT JOIN users_customuser creator ON od.created_by = creator.id
+`;
         const [officers] = await db.query(query);
         
         res.json(officers);
@@ -390,10 +393,10 @@ exports.registerOfficer = async (req, res) => {
             email,
             department,
             designation,
-            role,          // This is coming as "3" (ID) from frontend
+            role,
             username,
             password,
-            district_id ,
+            district_id,
             block_id
         } = req.body;
 
@@ -417,13 +420,12 @@ exports.registerOfficer = async (req, res) => {
         // 3. Hash the password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 4. Find Role ID from users_role table
-        // ✅ FIX: Check if the input is an ID or a Name
+        // 4. Find Role ID
         let roleId = null;
         if (role) {
             const [roleRows] = await connection.query(
                 'SELECT id FROM users_role WHERE id = ? OR name = ?',
-                [role, role] // Checks both columns
+                [role, role]
             );
             
             if (roleRows.length > 0) {
@@ -434,49 +436,54 @@ exports.registerOfficer = async (req, res) => {
             }
         }
 
-        let genderValue = 0; 
-        if (gender === 'Male') {
-            genderValue = 1;
-        } else if (gender === 'Female') {
-            genderValue = 0;
-        }
-        // 5. Insert into users_customuser
+        // Gender Logic (1=Male, 2=Female, 3=Other)
+        let genderValue = 3; 
+        if (gender === 'Male') genderValue = 1;
+        else if (gender === 'Female') genderValue = 2;
+        
+        // 5. Insert into users_customuser (Fixed is_superuser error)
         const insertUserQuery = `
             INSERT INTO users_customuser 
-            (username, password, email, role_id, is_active ,date_joined) 
-            VALUES (?, ?, ?, ?, ?, ?)`;
+            (username, password, email, role_id, is_active, is_superuser, is_staff, date_joined) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
         
         const [userResult] = await connection.query(insertUserQuery, [
             username, 
             hashedPassword, 
             email, 
             roleId, 
-            true,
-            new Date()
+            true,       // is_active
+            false,      // is_superuser
+            true,       // is_staff
+            new Date()  // date_joined
         ]);
 
         const userId = userResult.insertId;
 
-        
-        // 6. Insert into officer_details
+        // --- UPDATED: Insert into officer_details with created_at and created_by ---
         const insertOfficerQuery = `
-    INSERT INTO officer_details
-    (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-    
-await connection.query(insertOfficerQuery, [
-    officername,
-    genderValue, 
-    mobile,
-    email,
-    department,
-    designation,
-    roleId, 
-    userId,
-    district_id, // From req.body
-    block_id,     // From req.body
-   
-]);
+            INSERT INTO officer_details
+            (
+                \`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, 
+                \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`, 
+                \`created_at\`, \`created_by\`
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        
+        await connection.query(insertOfficerQuery, [
+            officername,
+            genderValue, 
+            mobile,
+            email,
+            department,
+            designation,
+            roleId, 
+            userId,         // This is the 'Username' field in officer_details (User ID)
+            district_id, 
+            block_id,
+            new Date(),     // created_at: Current timestamp
+            req.user?.id    // created_by: ID of the logged-in user performing the action
+        ]);
 
         await connection.commit();
 
