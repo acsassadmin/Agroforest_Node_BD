@@ -1,24 +1,21 @@
-// controllers/masterController.js
 const db = require("../../db");
+
 // 1. Get Blocks
 exports.getBlocks = async (req, res) => {
   try {
     const { district_id } = req.query;
 
-    let query = `SELECT id, Block_Name FROM master_block`;
+    let query = `SELECT id, Block_Name, district_id FROM master_block`;
     let params = [];
 
-    // ✅ Filter by district_id if provided
     if (district_id) {
-      query += ` WHERE Dist_Name = ?`;
+      query += ` WHERE district_id = ?`;
       params.push(district_id);
     }
 
-    // ✅ Sort by Block_Name
     query += ` ORDER BY Block_Name ASC`;
 
     const [rows] = await db.query(query, params);
-
     res.status(200).json(rows);
   } catch (err) {
     console.error("Error fetching blocks:", err);
@@ -31,20 +28,17 @@ exports.getVillages = async (req, res) => {
   try {
     const { block_id } = req.query;
 
-    let query = `SELECT id, Village_Name FROM master_village`;
+    let query = `SELECT id, Village_Name, block_id FROM master_village`;
     let params = [];
 
-    // ✅ Filter by block_id if provided
     if (block_id) {
-      query += ` WHERE Block = ?`;
+      query += ` WHERE block_id = ?`;
       params.push(block_id);
     }
 
-    // ✅ Sort by Village_Name
     query += ` ORDER BY Village_Name ASC`;
 
     const [rows] = await db.query(query, params);
-
     res.status(200).json(rows);
   } catch (err) {
     console.error("Error fetching villages:", err);
@@ -55,10 +49,8 @@ exports.getVillages = async (req, res) => {
 // 3. Get Districts
 exports.getDistricts = async (req, res) => {
   try {
-    const query = `SELECT id, District_Name FROM master_district`;
-    
+    const query = `SELECT id, District_Name FROM master_district ORDER BY District_Name ASC`;
     const [rows] = await db.query(query);
-    
     res.status(200).json(rows);
   } catch (err) {
     console.error("Error fetching districts:", err);

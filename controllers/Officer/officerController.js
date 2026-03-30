@@ -181,15 +181,28 @@ exports.registerOfficer = async (req, res) => {
         let genderValue = gender === 'Male' ? 1 : 0;
 
         // 1. Insert into users_customuser
-        const insertUserQuery = `
-            INSERT INTO users_customuser 
-            (username, password, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        
-        const [userResult] = await connection.query(insertUserQuery, [
-            username, hashedPassword, email, roleId, true, new Date(), false, username, null,
-            department, district_id, block_id
-        ]);
+      // 1. Insert into users_customuser
+const insertUserQuery = `
+    INSERT INTO users_customuser 
+    (username, password, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+// Change the 9th parameter from null to officername or ''
+const [userResult] = await connection.query(insertUserQuery, [
+    username, 
+    hashedPassword, 
+    email, 
+    roleId, 
+    true, 
+    new Date(), 
+    false, 
+    officername, // Was username, changed to officername for first_name
+    '',          // <--- Changed from null to empty string to satisfy database
+    department, 
+    district_id, 
+    block_id
+]);
+
 
         const userId = userResult.insertId;
 

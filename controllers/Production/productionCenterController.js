@@ -677,13 +677,14 @@ exports.getDistrictSummary = async (req, res) => {
                     }
                 });
 
-                const [targets] = await db.query(`
-                    SELECT SUM(target_quantity) AS total_target
-                    FROM target_productioncenter
-                    WHERE productioncenter_id IN (?)
-                `, [centerIds]);
+                  const [targets] = await db.query(`
+                SELECT SUM(target_quantity) AS total_target
+                FROM target_district
+                WHERE district_id = ?
+            `, [district.id]);
 
-                totalTarget = targets[0].total_target || 0;
+            totalTarget = targets[0]?.total_target || 0;
+            // --- END TARGET PART ---
             }
 
             districtSummaries.push({
@@ -994,80 +995,6 @@ exports.getProductionCenterSummary = async (req, res) => {
 
     } catch (err) {
         console.error("Production Center Summary Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-};
-exports.getSingleProductionCenterSummary = async (req, res) => {
-    try {
-        const { center_id } = req.query;
-
-        if (!center_id) {
-            return res.status(400).json({ error: "center_id query parameter is required" });
-        }
-
-        // FIX: Changed column name to 'name_of_production_centre'
-        const [centerRows] = await db.query(`
-            SELECT name_of_production_centre 
-            FROM productioncenter_productioncenter 
-            WHERE id = ?
-        `, [center_id]);
-        
-        if (centerRows.length === 0) {
-            return res.status(404).json({ error: "Production Center not found" });
-        }
-        
-        // FIX: Accessing the correct column name
-        const centerName = centerRows[0].name_of_production_centre;
-
-        const statsQuery = `
-            SELECT 
-                COUNT(DISTINCT pc.id) AS total_centers,
-                COALESCE(SUM(ps.saplings_available), 0) AS total_stock_count,
-                COALESCE(SUM(ps.total_selled), 0) AS total_sales_count,
-                COALESCE(SUM(ps.total_selled_price), 0) AS total_sale_price
-            FROM productioncenter_productioncenter pc
-            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-            WHERE pc.id = ? 
-        `;
-
-        const targetQuery = `
-            SELECT COALESCE(SUM(tp.target_quantity), 0) AS total_target
-            FROM target_productioncenter tp
-            JOIN productioncenter_productioncenter pc ON tp.productioncenter_id = pc.id
-            WHERE pc.id = ?
-        `;
-
-        const saplingsQuery = `
-            SELECT 
-                t.s_name, 
-                SUM(ps.saplings_available) AS count
-            FROM productioncenter_stockdetails ps
-            JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
-            JOIN tbl_agroforest_trees t ON ps.species_id = t.id
-            WHERE pc.id = ? 
-            GROUP BY t.s_name
-        `;
-
-        const [[statsResult], [targetResult], [saplingsResult]] = await Promise.all([
-            db.query(statsQuery, [center_id]),
-            db.query(targetQuery, [center_id]),
-            db.query(saplingsQuery, [center_id])
-        ]);
-
-        const responseData = {
-            center: centerName,
-            saplings: saplingsResult,
-            total_production_centers: statsResult[0].total_centers || 0,
-            total_stock_sapling: statsResult[0].total_stock_count,     
-            total_sale_saplingcount: statsResult[0].total_sales_count,  
-            total_sale_price: statsResult[0].total_sale_price,
-            target: targetResult[0].total_target
-        };
-
-        res.status(200).json(responseData);
-
-    } catch (err) {
-        console.error("Get Single Production Center Summary Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

@@ -3,15 +3,29 @@ const db = require('../../db');
 // ===================== CREATE TARGET DISTRICT =====================
 exports.createTargetDistrict = async (req, res) => {
     try {
-        // Destructure only necessary fields
-        const { target_department_id, district_id, target_quantity, start_date, end_date, status, created_by } = req.body;
+        const { 
+            target_department_id, 
+            district_id, 
+            target_quantity, 
+            start_date, 
+            end_date, 
+            status, 
+            created_by,
+            scheme_type,   // NEW
+            scheme_id      // NEW
+        } = req.body;
 
-        // Validation
+        // 1. Validation
         if (!target_department_id || !district_id || target_quantity === undefined || !start_date || !end_date || !created_by) {
             return res.status(400).json({ message: "Department, District, Quantity, Dates, and Creator are required" });
         }
 
-        // Check Overlap
+        // 2. Scheme Logic Validation
+        if (scheme_type === "Scheme" && !scheme_id) {
+            return res.status(400).json({ message: "Scheme ID is required when Scheme type is selected" });
+        }
+
+        // 3. Check Overlap
         const [existing] = await db.query(
             `SELECT * FROM target_district 
              WHERE target_department_id = ? AND district_id = ?
@@ -23,20 +37,31 @@ exports.createTargetDistrict = async (req, res) => {
             return res.status(400).json({ message: "Target already exists for this district in this date range" });
         }
 
-        // Insert Data
+        // 4. Insert Data
         const [result] = await db.query(
             `INSERT INTO target_district 
-            (target_department_id, district_id, target_quantity, start_date, end_date, status, created_by) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [target_department_id, district_id, target_quantity, start_date, end_date, status || 'Active', created_by]
+            (target_department_id, district_id, target_quantity, start_date, end_date, status, created_by, scheme_type, scheme_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                target_department_id, 
+                district_id, 
+                target_quantity, 
+                start_date, 
+                end_date, 
+                status || 'Active', 
+                created_by, 
+                scheme_type || "Non-Scheme", // Default
+                scheme_id || null
+            ]
         );
 
-        // Fetch new record with User Name and District Name
+        // Fetch new record with joined names
         const [newTarget] = await db.query(
-            `SELECT td.*, md.District_Name AS district_name, uc.username AS created_by_name
+            `SELECT td.*, md.District_Name AS district_name, uc.username AS created_by_name, s.name AS scheme_name
              FROM target_district td
              JOIN master_district md ON td.district_id = md.id
              LEFT JOIN users_customuser uc ON td.created_by = uc.id
+             LEFT JOIN tn_schema s ON td.scheme_id = s.id
              WHERE td.id = ?`,
             [result.insertId]
         );
@@ -52,7 +77,7 @@ exports.createTargetDistrict = async (req, res) => {
     }
 };
 
-// ===================== GET ALL TARGET DISTRICTS (List View) =====================
+// ===================== GET ALL TARGET DISTRICTS =====================
 exports.getAllTargetDistricts = async (req, res) => {
     try {
         const { target_department_id } = req.query;
@@ -62,6 +87,7 @@ exports.getAllTargetDistricts = async (req, res) => {
         const offset = (page - 1) * limit;
 
         let countQuery = `SELECT COUNT(*) as total FROM target_district td`;
+        // ADDED scheme_type and scheme_name joins
         let dataQuery = `
             SELECT td.id, 
                    td.target_department_id,
@@ -69,11 +95,14 @@ exports.getAllTargetDistricts = async (req, res) => {
                    td.start_date, 
                    td.end_date, 
                    td.status,
+                   td.scheme_type,
                    md.District_Name AS district_name,
-                   uc.username AS created_by_name
+                   uc.username AS created_by_name,
+                   s.name AS scheme_name
             FROM target_district td
             JOIN master_district md ON td.district_id = md.id
             LEFT JOIN users_customuser uc ON td.created_by = uc.id
+            LEFT JOIN tn_schema s ON td.scheme_id = s.id
         `;
 
         const params = [];
@@ -89,7 +118,7 @@ exports.getAllTargetDistricts = async (req, res) => {
         const [countRows] = await db.query(countQuery, countParams);
         const total = countRows[0].total;
 
-        dataQuery += " LIMIT ? OFFSET ?";
+        dataQuery += " ORDER BY td.id DESC LIMIT ? OFFSET ?";
         params.push(limit, offset);
 
         const [rows] = await db.query(dataQuery, params);
@@ -109,16 +138,17 @@ exports.getAllTargetDistricts = async (req, res) => {
     }
 };
 
-// ===================== GET TARGET DISTRICT BY ID (Edit View) =====================
+// ===================== GET TARGET DISTRICT BY ID =====================
 exports.getTargetDistrictById = async (req, res) => {
     try {
         const { id } = req.params;
 
         const [rows] = await db.query(
-            `SELECT td.*, md.District_Name AS district_name, uc.username AS created_by_name
+            `SELECT td.*, md.District_Name AS district_name, uc.username AS created_by_name, s.name AS scheme_name
              FROM target_district td
              JOIN master_district md ON td.district_id = md.id
              LEFT JOIN users_customuser uc ON td.created_by = uc.id
+             LEFT JOIN tn_schema s ON td.scheme_id = s.id
              WHERE td.id = ?`,
             [id]
         );
@@ -136,13 +166,27 @@ exports.getTargetDistrictById = async (req, res) => {
 exports.updateTargetDistrict = async (req, res) => {
     try {
         const { id } = req.params;
-        const { target_department_id, district_id, target_quantity, start_date, end_date, status } = req.body;
+        const { 
+            target_department_id, 
+            district_id, 
+            target_quantity, 
+            start_date, 
+            end_date, 
+            status,
+            scheme_type = "Non-Scheme", // NEW
+            scheme_id = null            // NEW
+        } = req.body;
+
+        // Validation
+        if (scheme_type === "Scheme" && !scheme_id) {
+            return res.status(400).json({ message: "Scheme ID is required for Scheme type" });
+        }
 
         await db.query(
             `UPDATE target_district 
-             SET target_department_id = ?, district_id = ?, target_quantity = ?, start_date = ?, end_date = ?, status = ?
+             SET target_department_id = ?, district_id = ?, target_quantity = ?, start_date = ?, end_date = ?, status = ?, scheme_type = ?, scheme_id = ?
              WHERE id = ?`,
-            [target_department_id, district_id, target_quantity, start_date, end_date, status, id]
+            [target_department_id, district_id, target_quantity, start_date, end_date, status, scheme_type, scheme_id, id]
         );
 
         res.status(200).json({ message: "Target District updated successfully" });

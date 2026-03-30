@@ -26,7 +26,6 @@ router.get('/districts/summary/', authenticateToken, prodController.getSingleDis
 
 router.get('/blocksummary/', prodController.getBlockSummary);
 router.get('/productioncenter-summary', prodController.getProductionCenterSummary);
-router.get('/single-productioncenter-summary', prodController.getSingleProductionCenterSummary);
 
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
