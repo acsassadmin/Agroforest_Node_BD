@@ -1,8 +1,9 @@
 const express = require('express');
 const cors = require('cors');
+require('dotenv').config();
 const https = require('https');
 const fs = require('fs');
-
+const path = require('path');
 const app = express();
 const PORT = 3001;
 
@@ -42,8 +43,8 @@ app.use('/targetdistrict', targetDistrictRoutes);
 app.use('/targetblock', targetBlockRoutes);
 app.use('/targetproductioncenter', targetProductionCenterRoutes);
 app.use('/master', masterRoutes);
-
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ✅ START HTTPS SERVER (instead of app.listen)
 https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 HTTPS running at https://192.168.1.41:${PORT}`);
+  console.log(`🚀 HTTPS running at https://192.168.1.203:${PORT}`);
 });

@@ -9,6 +9,8 @@ const authenticateToken = require('../middleware/authMiddleware'); // Import Mid
 router.post('/register/', userController.register);
 router.post('/verify-otp/', userController.verifyOtp);
 router.post('/login/', userController.login);
+router.post('/reset-password/', userController.resetPassword);
+router.post('/forgot-password/', userController.forgotPassword);
 router.post('/refresh/', userController.refreshToken);
 router.get('/roles/', userController.getRoles); 
 
@@ -32,12 +34,20 @@ router.get('/dashboard/district-saplings', authenticateToken, userController.get
 router.get('/production-centers/map', authenticateToken, userController.getProductionCentersForMap);
 
 
-// ----------------Dashboards--------------
+// ----------------Officer Dashboards--------------
 router.get('/dashboard-counts/', authenticateToken, userController.getDashboardCounts);
 router.get('/farmer-request-weekly-report/', authenticateToken, userController.getWeeklyFarmerRequestReport);
 router.get('/production-centers', authenticateToken, userController.getProductionCentersList);
 router.get('/target-details/', authenticateToken, userController.getTargetDetails);
 router.get('/farmer-details/', authenticateToken, userController.getFarmerDetails);
+
+// ----------------Production center Dashboards--------------
+
+router.get('/production-counts/', authenticateToken, userController.getProductionCenterStats);
+router.get('/production-saplings/', authenticateToken, userController.getProductionCenterSaplings);
+router.get('/production-monthly-sales/', authenticateToken, userController.getMonthlyTotalSales);
+
+
 
 
 

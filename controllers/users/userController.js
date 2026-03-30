@@ -5,97 +5,150 @@ const NodeCache = require("node-cache");
 
 const sendOtpEmail = require('../../utils/mailer');
 const redisClient = require('../../redisClient');
-
+const sendOtpSms = require('../../utils/sendSms');
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const cache = new NodeCache({ stdTTL: 180 }); 
 
 // ===================== AUTH =====================
 
 // REGISTER (SEND OTP)
 exports.register = async (req, res) => {
-    try {
-        const { username, password, email, phone, role } = req.body;
-        console.log(username,"user" , password,"user" , email,"user" , phone,"user" , role);
-        const [existingUsers] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
-        if (existingUsers.length > 0) {
-            return res.status(400).json({ message: 'User with this email already exists.' });
-        }
-
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        const userData = {
-            username,
-            email,
-            password: hashedPassword,
-            phone: phone || null,
-            role_id: role,
-            otp: otp
-        };
-
-        await redisClient.set(`register_${email}`, JSON.stringify(userData), { EX: 600 });
-        await sendOtpEmail(email, otp);
-
-        res.status(200).json({ 
-            message: "OTP sent to email", 
-            otp: otp 
-        });
-
-    } catch (err) {
-        console.error("Registration Error:", err);
-        res.status(500).json({ error: err.message });
+  try {
+    // 1. Destructure Email along with other fields
+    const { username, password, phone, role, email } = req.body;
+    
+    // 2. Validate required fields
+    if (!phone || !password || !email) {
+      return res.status(400).json({ message: 'Phone, Password, and Email are required' });
     }
+
+    // 3. Normalize & validate phone
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    const e164 = pn.number; // e.g., +919789754800
+
+    // 4. Check if user exists by Phone
+    const [existingPhone] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
+    if (existingPhone.length > 0) {
+      return res.status(400).json({ message: 'User with this phone already exists.' });
+    }
+
+    // 5. Check if user exists by Email (New Check)
+    const [existingEmail] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
+    if (existingEmail.length > 0) {
+      return res.status(400).json({ message: 'User with this email already exists.' });
+    }
+
+    // 6. Generate OTP and hashed password
+    // const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 7. Include Email in the pending object
+    // const pending = { 
+    //   username, 
+    //   phone: e164, 
+    //   email, // Added Email
+    //   password: hashedPassword, 
+    //   role_id: role, 
+    //   otp 
+    // };
+    const insertQuery = `
+      INSERT INTO users_customuser
+        (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `;
+    // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
+
+    await db.query(insertQuery, [
+      username,   // 1. ?
+      phone,      // 2. ?
+      email,      // 3. ?
+      hashedPassword,   // 4. ?
+      role,    // 5. ?
+      true,                  // 6. ?
+      false,                 // 7. ?
+      null                   // 8. ? (This is for first_name)
+                             // 9. CURRENT_TIMESTAMP is handled by SQL
+    ]);
+    // 8. Store in Redis with 10 min TTL
+    // await redisClient.set(`register_${e164}`, JSON.stringify(pending), { EX: 600 });
+
+    // 9. Send SMS (uncomment when ready)
+    // await sendOtpSms(e164, otp);
+
+    return res.status(200).json({ message: 'OTP sent to phone' });
+  } catch (err) {
+    console.error('Registration Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 // VERIFY OTP
 exports.verifyOtp = async (req, res) => {
-    try {
-        const { email, otp } = req.body;
+  try {
+    const { phone, otp } = req.body;
+    if (!phone || !otp) return res.status(400).json({ message: 'Phone and OTP required' });
 
-        const cachedDataString = await redisClient.get(`register_${email}`);
+    // 1. Normalize Phone
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    const e164 = pn.number; 
 
-        if (!cachedDataString) {
-            return res.status(400).json({ message: 'OTP expired or invalid request. Please register again.' });
-        }
-
-        const cachedData = JSON.parse(cachedDataString);
-
-        if (cachedData.otp !== otp) {
-            return res.status(400).json({ message: 'Invalid OTP' });
-        }
-
-        const insertQuery = `
-            INSERT INTO users_customuser 
-            (username, email, password, phone, role_id, is_active) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        `;
-        
-        await db.query(insertQuery, [
-            cachedData.username,
-            cachedData.email,
-            cachedData.password,
-            cachedData.phone,
-            cachedData.role_id,
-            true
-        ]);
-        console.log(cachedData.role_id , "roleeee")
-        await redisClient.del(`register_${email}`);
-
-        res.status(201).json({ message: "User registered successfully" });
-
-    } catch (err) {
-        console.error("Verify OTP Error:", err);
-        if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(400).json({ message: 'User already exists.' });
-        }
-        res.status(500).json({ error: err.message });
+    // 2. Get Cached Data from Redis
+    const cachedDataString = await redisClient.get(`register_${e164}`);
+    if (!cachedDataString) {
+      return res.status(400).json({ message: 'OTP expired or invalid request. Please register again.' });
     }
+
+    const cachedData = JSON.parse(cachedDataString);
+
+    // 3. Verify OTP
+    if (cachedData.otp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    // 4. Insert into Database
+    // COLUMNS: username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined
+    // COUNT: 9 Columns
+    
+    const insertQuery = `
+      INSERT INTO users_customuser
+        (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `;
+    // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
+
+    await db.query(insertQuery, [
+      cachedData.username,   // 1. ?
+      cachedData.phone,      // 2. ?
+      cachedData.email,      // 3. ?
+      cachedData.password,   // 4. ?
+      cachedData.role_id,    // 5. ?
+      true,                  // 6. ?
+      false,                 // 7. ?
+      null                   // 8. ? (This is for first_name)
+                             // 9. CURRENT_TIMESTAMP is handled by SQL
+    ]);
+    
+    // 5. Cleanup Redis
+    await redisClient.del(`register_${e164}`);
+    res.status(201).json({ message: "User registered successfully" });
+    
+  } catch (err) {
+    console.error("Verify OTP Error:", err);
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ message: 'User already exists.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // 1. Query with JOINs + New Columns (department_id, district_id, block_id)
+    // 1. Query with JOINs to get Role Name, Production Center ID, and Status
+    // This query runs directly against the DB every time. No cache here.
     const query = `
       SELECT 
         u.id, 
@@ -104,10 +157,7 @@ exports.login = async (req, res) => {
         u.role_id,
         r.name as role_name,
         pc.id as production_center_id,
-        pc.status as production_center_status,
-        u.department_id,
-        u.district_id,
-        u.block_id
+        pc.status as production_center_status
       FROM users_customuser u
       LEFT JOIN users_role r ON u.role_id = r.id
       LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
@@ -128,18 +178,15 @@ exports.login = async (req, res) => {
       return res.status(400).json({ error: "Wrong password" });
     }
 
-    // --- Define Secrets ---
+    // --- Define Secrets (Ideally use process.env) ---
     const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
 
+    // 3. Generate Access Token
+    // ⚠️ IMPORTANT: This token holds the role. If you change the role in DB,
+    // this token must be regenerated (User must Logout & Login).
     const accessToken = jwt.sign(
-      { 
-        id: user.id, 
-        role: user.role_name,
-        department_id: user.department_id,
-        district_id: user.district_id,
-        block_id: user.block_id
-      },
+      { id: user.id, role: user.role_name },
       JWT_SECRET,
       { expiresIn: '2h' }
     );      
@@ -150,7 +197,7 @@ exports.login = async (req, res) => {
       { expiresIn: '7d' }
     );
     
-    // 5. Send Response (Added new fields here)
+    // 5. Send Response
     res.json({
       access: accessToken,
       refresh: refreshToken,
@@ -158,11 +205,7 @@ exports.login = async (req, res) => {
       role: user.role_name,             
       user_name: user.username,
       production_center_id: user.production_center_id || null,
-      production_center_status: user.production_center_status || null,
-      // New fields added below:
-      department_id: user.department_id || null,
-      district_id: user.district_id || null,
-      block_id: user.block_id || null
+      production_center_status: user.production_center_status || null
     });
 
   } catch (err) {
@@ -175,6 +218,97 @@ exports.login = async (req, res) => {
 exports.refreshToken = async (req, res) => {
     res.status(501).json({ message: "Refresh token logic not implemented yet" });
 };
+
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ message: 'Phone number is required' });
+    console.log(phone,"phone")
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    console.log('Input Phone:', phone, 'Parsed Result:', pn);
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    const e164 = pn.number;
+
+    // Check if user exists
+    const [users] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found with this phone number' });
+    }
+
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Store in Redis with 10 min TTL (Key: reset_<phone>)
+    await redisClient.set(`reset_${e164}`, otp, { EX: 600 });
+
+    // Send SMS
+    // await sendOtpSms(e164, otp);
+
+    return res.status(200).json({ message: 'OTP sent to phone', otp }); // 'otp' returned for testing, remove in prod
+  } catch (err) {
+    console.error('Forgot Password Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// 2. RESET PASSWORD (Verify OTP & Set New Password)
+exports.resetPassword = async (req, res) => {
+  try {
+    const { phone, otp, newPassword } = req.body;
+    
+    if (!phone || !otp || !newPassword) {
+      return res.status(400).json({ message: 'Phone, OTP, and New Password are required' });
+    }
+
+    // FIX 1: Add 'IN' as the second argument to handle local numbers like 978...
+    const pn = parsePhoneNumberFromString(phone, 'IN');
+    
+    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    
+    const e164 = pn.number; // e.g., +919789754800
+    const national = pn.nationalNumber; // e.g., 9789754800
+
+    // FIX 2: Find the user in DB to get their EXACT stored phone number.
+    // This ensures we check Redis with the correct key (matches forgotPassword logic).
+    const [users] = await db.query(
+      'SELECT phone FROM users_customuser WHERE phone = ? OR phone = ?', 
+      [e164, national]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const storedPhone = users[0].phone; // This is the key used in Redis
+
+    // Check Redis for OTP using the exact phone string from DB
+    const storedOtp = await redisClient.get(`reset_${storedPhone}`);
+    
+    if (!storedOtp) {
+      return res.status(400).json({ message: 'OTP expired. Please request a new one.' });
+    }
+
+    if (storedOtp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update User in DB
+    await db.query('UPDATE users_customuser SET password = ? WHERE phone = ?', [hashedPassword, storedPhone]);
+
+    // Delete OTP from Redis to prevent reuse
+    await redisClient.del(`reset_${storedPhone}`);
+
+    return res.status(200).json({ message: 'Password reset successfully' });
+  } catch (err) {
+    console.error('Reset Password Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 
 // ===================== ROLE =====================
 
@@ -600,10 +734,7 @@ try {
 } catch (cacheErr) {
   console.error("Cache clearing error:", cacheErr);
 }
-
-
     res.json({ message: "Updated successfully" });
-
   } catch (err) {
     await connection.rollback();
     console.error("Approve Item Error:", err);
@@ -612,21 +743,20 @@ try {
     connection.release();
   }
 };
+
+
 exports.getCenterOrders = async (req, res) => {
     try {
-        const { production_center_id, user_id, limit, offset } = req.query;
+        const { production_center_id, user_id,status, limit, offset } = req.query;
 
-        // Log incoming query params for debugging
         console.log("👉 Incoming Query Params:", req.query);
 
-        // ✅ At least one filter required
-        if (!production_center_id && !user_id) {
-            return res.status(400).json({
-                error: "Either production_center_id or user_id is required"
-            });
-        }
+        // if (!production_center_id && !user_id) {
+        //     return res.status(400).json({
+        //         error: "Either production_center_id or user_id is required"
+        //     });
+        // }
 
-        // ✅ Dynamic WHERE clause
         let whereConditions = [];
         let params = [];
 
@@ -639,15 +769,22 @@ exports.getCenterOrders = async (req, res) => {
             whereConditions.push(`fr.created_by_id = ?`);
             params.push(user_id);
         }
-
+        if (status) {
+      // support comma-separated list or single status
+      const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+      if (statuses.length === 1) {
+        whereConditions.push(`fr.status = ?`);
+        params.push(statuses[0]);
+      } else if (statuses.length > 1) {
+        const placeholders = statuses.map(() => '?').join(',');
+        whereConditions.push(`fr.status IN (${placeholders})`);
+        params.push(...statuses);
+      }
+    }
         const whereClause = whereConditions.length
             ? `WHERE ${whereConditions.join(" AND ")}`
             : "";
 
-        console.log("👉 WHERE Clause:", whereClause);
-        console.log("👉 Params:", params);
-
-        // Handle pagination (limit and offset)
         let limitValue = limit ? parseInt(limit) : undefined;
         let offsetValue = offset ? parseInt(offset) : undefined;
         
@@ -657,7 +794,7 @@ exports.getCenterOrders = async (req, res) => {
         const limitClause = limitValue ? `LIMIT ?` : "";
         const offsetClause = offsetValue ? `OFFSET ?` : "";
 
-        // 1. Fetch raw flat data
+        // Use DESC for Newest first, or ASC for Oldest first
         const query = `
             SELECT 
                 fr.id as request_id,
@@ -684,21 +821,15 @@ exports.getCenterOrders = async (req, res) => {
             ${limitClause} ${offsetClause}
         `;
 
-        // Log final query and parameters
-        console.log("👉 Final Query:", query);
-        console.log("👉 Params for query:", [...params, limitValue, offsetValue]);
+        const queryParams = [...params, limitValue, offsetValue].filter(v => v !== undefined);
+        const [rows] = await db.query(query, queryParams);
 
-        // Execute the query with sanitized parameters
-        const [rows] = await db.query(query, [...params, limitValue, offsetValue].filter(Boolean));
-
-        console.log("👉 Raw DB Rows Count:", rows.length);
-
-        // 2. Group orders by request_id
-        const ordersMap = {};
+        // ✅ FIXED: Using Map to preserve the SQL Sort Order
+        const ordersMap = new Map();
 
         rows.forEach(row => {
-            if (!ordersMap[row.request_id]) {
-                ordersMap[row.request_id] = {
+            if (!ordersMap.has(row.request_id)) {
+                ordersMap.set(row.request_id, {
                     request_id: row.request_id,
                     orderid: row.orderid,
                     order_status: row.order_status,
@@ -707,11 +838,11 @@ exports.getCenterOrders = async (req, res) => {
                     farmer_mobile: row.farmer_mobile,
                     farmer_code: row.farmer_code,
                     requested_items: []
-                };
+                });
             }
 
             if (row.item_id) {
-                ordersMap[row.request_id].requested_items.push({
+                ordersMap.get(row.request_id).requested_items.push({
                     item_id: row.item_id,
                     stock_id: row.stock_id,
                     species_id: row.species_id,
@@ -724,12 +855,9 @@ exports.getCenterOrders = async (req, res) => {
             }
         });
 
-        const results = Object.values(ordersMap);
+        // Convert Map back to array (stays in order)
+        const results = Array.from(ordersMap.values());
 
-        // Log the final response count after grouping
-        console.log("👉 Final Results Count After Grouping:", results.length);
-
-        // Return the grouped results
         res.json({
             count: results.length,
             results
@@ -740,6 +868,7 @@ exports.getCenterOrders = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
 
 
 exports.getTnSchemas = async (req, res) => {
@@ -1295,16 +1424,19 @@ exports.getProductionCentersList = async (req, res) => {
         // We select center details and SUM the saplings_available from the stock table.
         // LEFT JOIN ensures we show centers even if they have 0 stock.
         let query = `
-            SELECT 
-                pc.id,
-                pc.name_of_production_centre,
-                pc.complete_address,
-                pc.status,
-                pc.production_type,
-                COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
-            FROM productioncenter_productioncenter pc
-            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-        `;
+  SELECT 
+    pc.id,
+    pc.name_of_production_centre,
+    pc.complete_address,
+    pc.status,
+    pc.district_id,
+    md.District_Name AS District_Name,
+    pc.production_type,
+    COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
+  FROM productioncenter_productioncenter pc
+  LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+  LEFT JOIN master_district md ON pc.district_id = md.id
+`;
 
         const params = [];
 
@@ -1630,3 +1762,118 @@ exports.getFarmerDetails = async (req, res) => {
         res.status(500).json({ success: false, error: "Server Error", details: err.message });
     }
 };
+
+
+// production-center dahsboard =---------------------
+
+exports.getProductionCenterStats = async (req, res) => {
+  try {
+    const { production_center_id } = req.query;
+    const pid = production_center_id ?? null;
+
+    const query = `
+      SELECT
+        u.production_center_id,
+        COALESCE(tpc.target_quantity, 0) AS target_quantity,
+        COALESCE(tpc.start_date, NULL) AS start_date,
+        COALESCE(tpc.end_date, NULL) AS end_date,
+        COALESCE(cu.username, NULL) AS created_by_name,
+        COALESCE(SUM(status IN ('order-placed','order-billed')), 0) AS order_placed_count,
+        COALESCE(SUM(status = 'billed'), 0) AS billed_count,
+        COALESCE(SUM(status = 'pending'), 0) AS pending_count
+      FROM users_farmerrequest u
+      LEFT JOIN target_productioncenter tpc
+        ON tpc.productioncenter_id = u.production_center_id
+      LEFT JOIN users_customuser cu
+        ON tpc.created_by = cu.id
+      WHERE (? IS NULL OR u.production_center_id = ?)
+      GROUP BY u.production_center_id, tpc.target_quantity, tpc.start_date, tpc.end_date, cu.username
+      ORDER BY u.production_center_id ASC;
+    `;
+
+    const params = [pid, pid];
+    console.log('getProductionCenterStats params:', params);
+
+    const [rows] = await db.query(query, params);
+    console.log('getProductionCenterStats rows:', rows);
+
+    res.status(200).json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    console.error("❌ Stats Error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch production center stats", details: err.message });
+  }
+};
+
+
+
+exports.getProductionCenterSaplings = async (req, res) => {
+  try {
+    const { production_center_id } = req.query;
+    const pid = production_center_id ?? null;
+
+    const query = `
+      SELECT
+        ps.species_id,
+        t.name,
+        ps.saplings_available,
+        ps.sapling_age
+      FROM productioncenter_stockdetails ps
+      LEFT JOIN tbl_agroforest_trees t
+        ON ps.species_id = t.id
+      WHERE (? IS NULL OR ps.production_center_id = ?)
+      ORDER BY ps.species_id ASC;
+    `;
+
+    const params = [pid, pid];
+    const [rows] = await db.query(query, params);
+
+    res.status(200).json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    console.error("❌ Saplings Error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch sapling details", details: err.message });
+  }
+};
+
+
+exports.getMonthlyTotalSales = async (req, res) => {
+  try {
+    const { production_center_id, year } = req.query;
+    const pid = production_center_id ?? null;
+    const yy = year ? Number(year) : new Date().getFullYear();
+
+    const query = `
+      SELECT
+        MONTH(ps.updated_at) AS month,
+        SUM(COALESCE(ps.total_selled,0)) AS total_selled,
+        SUM(COALESCE(ps.total_selled_price,0.00)) AS total_selled_price
+      FROM productioncenter_stockdetails ps
+      WHERE (? IS NULL OR ps.production_center_id = ?)
+        AND YEAR(ps.updated_at) = ?
+      GROUP BY MONTH(ps.updated_at)
+      ORDER BY MONTH(ps.updated_at);
+    `;
+
+    const params = [pid, pid, yy];
+    const [rows] = await db.query(query, params);
+
+    // Build full months 1..12 with zeros where missing
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      const r = rows.find(rr => Number(rr.month) === m);
+      return {
+        month: m,
+        total_selled: r ? Number(r.total_selled) : 0,
+        total_selled_price: r ? Number(r.total_selled_price) : 0
+      };
+    });
+
+    res.status(200).json({ success: true, year: yy, count: months.length, data: months });
+  } catch (err) {
+    console.error("❌ Monthly Total Sales Error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch monthly total sales", details: err.message });
+  }
+};
+
+
+
+

@@ -127,7 +127,6 @@ const formatCenterData = (centers, certificates) => {
             }));
         return {
             ...center,
-            production_center_type_name: center.type_name,
             certificates: centerCerts
         };
     });
@@ -208,7 +207,6 @@ exports.getProductionCenters = async (req, res) => {
             let singleQuery = `
                 SELECT 
                     pc.*, 
-                    pct.name as type_name,
                     d.District_Name as district_name,
                     b.Block_Name as block_name,
                     v.Village_Name as village_name,
@@ -319,7 +317,6 @@ exports.getProductionCenters = async (req, res) => {
         const dataQuery = `
             SELECT 
                 pc.*, 
-                pct.name as type_name,
                 d.District_Name as district_name,
                 b.Block_Name as block_name,
                 v.Village_Name as village_name,
@@ -564,7 +561,6 @@ exports.getNearbyProductionCenters = async (req, res) => {
         const query = `
             SELECT DISTINCT
                 pc.*, 
-                pct.name as type_name,
                 d.District_Name as district_name,
                 b.Block_Name as block_name,
                 v.Village_Name as village_name,
@@ -684,7 +680,6 @@ exports.getDistrictSummary = async (req, res) => {
             `, [district.id]);
 
             totalTarget = targets[0]?.total_target || 0;
-            // --- END TARGET PART ---
             }
 
             districtSummaries.push({
