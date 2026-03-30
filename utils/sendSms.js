@@ -1,20 +1,10 @@
-const twilio = require('twilio');
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const fromNumber = process.env.TWILIO_FROM_NUMBER;
-if (!accountSid || !authToken || !fromNumber) {
-  throw new Error('Twilio env vars missing');
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER } = process.env;
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+  console.warn('Twilio env vars missing — SMS disabled');
+  module.exports = { sendSms: async () => null };
+  return;
 }
-const client = twilio(accountSid, authToken);
-
-const sendOtpSms = async (toPhone, otp) => {
-  if (!toPhone) throw new Error('No phone number');
-  const msg = await client.messages.create({
-    body: `Your OTP for registration is: ${otp}. It is valid for 10 minutes.`,
-    from: fromNumber,
-    to: toPhone
-  });
-  return msg.sid;
+const twilio = require('twilio')(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+module.exports = {
+  sendSms: async (to, body) => twilio.messages.create({ from: TWILIO_PHONE_NUMBER, to, body })
 };
-
-module.exports = sendOtpSms;
