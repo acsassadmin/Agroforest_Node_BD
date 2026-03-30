@@ -142,7 +142,7 @@ exports.login = async (req, res) => {
       },
       JWT_SECRET,
       { expiresIn: '2h' }
-    );
+    );      
 
     const refreshToken = jwt.sign(
       { id: user.id },
