@@ -2,15 +2,16 @@ const express = require('express');
 const router = express.Router();
 
 const targetProductionCenterController = require('../controllers/Target/targetProductionCenterController');
+const authenticateToken = require('../middleware/authMiddleware'); 
 
-// ✅ ADD THIS LINE: Import your authentication middleware
-const authMiddleware = require('../middleware/authMiddleware'); 
+// SPECIFIC ROUTES MUST BE FIRST
+router.get('/productioncenters', authenticateToken, targetProductionCenterController.getProductionCentersByBlock);
 
-// ✅ ADD authMiddleware to all these routes
-router.post('/', authMiddleware, targetProductionCenterController.createTargetProductionCenter);
-router.get('/', authMiddleware, targetProductionCenterController.getAllTargetProductionCenters);
-router.get('/:id', authMiddleware, targetProductionCenterController.getTargetProductionCenterById);
-router.put('/:id', authMiddleware, targetProductionCenterController.updateTargetProductionCenter);
-router.delete('/:id', authMiddleware, targetProductionCenterController.deleteTargetProductionCenter);
+// STANDARD CRUD ROUTES
+router.post('/', authenticateToken, targetProductionCenterController.createTargetProductionCenter);
+router.get('/', authenticateToken, targetProductionCenterController.getAllTargetProductionCenters);
+router.get('/:id', authenticateToken, targetProductionCenterController.getTargetProductionCenterById);
+router.put('/:id', authenticateToken, targetProductionCenterController.updateTargetProductionCenter);
+router.delete('/:id', authenticateToken, targetProductionCenterController.deleteTargetProductionCenter);
 
 module.exports = router;
