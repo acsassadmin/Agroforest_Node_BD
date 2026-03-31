@@ -1,7 +1,17 @@
 const db = require('../../db');
 
+// ===================== ADDED: STRICT DATE FORMATTER =====================
+// This guarantees no matter what format the frontend sends, it becomes "YYYY-MM-DD"
+const formatToDate = (dateStr) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    return d.toISOString().split('T')[0]; 
+};
+// =======================================================================
+
 // ===================== CREATE TARGET DISTRICT =====================
 exports.createTargetDistrict = async (req, res) => {
+    console.log("=== REQ.USER DATA ===", req.user);
     try {
         const { 
             target_department_id, 
@@ -11,13 +21,13 @@ exports.createTargetDistrict = async (req, res) => {
             end_date, 
             status, 
             created_by,
-            scheme_type,   // NEW
-            scheme_id      // NEW
+            scheme_type,   
+            scheme_id      
         } = req.body;
 
         // 1. Validation
-        if (!target_department_id || !district_id || target_quantity === undefined || !start_date || !end_date || !created_by) {
-            return res.status(400).json({ message: "Department, District, Quantity, Dates, and Creator are required" });
+        if ( !district_id || target_quantity === undefined || !start_date || !end_date || !created_by) {
+            return res.status(400).json({ message: "all fields  are required" });
         }
 
         // 2. Scheme Logic Validation
@@ -25,12 +35,17 @@ exports.createTargetDistrict = async (req, res) => {
             return res.status(400).json({ message: "Scheme ID is required when Scheme type is selected" });
         }
 
+        // ===================== APPLIED DATE FORMAT HERE =====================
+        const finalStartDate = formatToDate(start_date);
+        const finalEndDate = formatToDate(end_date);
+        // ==================================================================
+
         // 3. Check Overlap
         const [existing] = await db.query(
             `SELECT * FROM target_district 
              WHERE target_department_id = ? AND district_id = ?
              AND ((? BETWEEN start_date AND end_date) OR (? BETWEEN start_date AND end_date))`,
-            [target_department_id, district_id, start_date, end_date]
+            [target_department_id, district_id, finalStartDate, finalEndDate] // Used formatted dates
         );
 
         if (existing.length > 0) {
@@ -46,11 +61,11 @@ exports.createTargetDistrict = async (req, res) => {
                 target_department_id, 
                 district_id, 
                 target_quantity, 
-                start_date, 
-                end_date, 
+                finalStartDate, // Used formatted date
+                finalEndDate,   // Used formatted date
                 status || 'Active', 
                 created_by, 
-                scheme_type || "Non-Scheme", // Default
+                scheme_type || "Non-Scheme", 
                 scheme_id || null
             ]
         );
@@ -87,7 +102,6 @@ exports.getAllTargetDistricts = async (req, res) => {
         const offset = (page - 1) * limit;
 
         let countQuery = `SELECT COUNT(*) as total FROM target_district td`;
-        // ADDED scheme_type and scheme_name joins
         let dataQuery = `
             SELECT td.id, 
                    td.target_department_id,
@@ -173,8 +187,8 @@ exports.updateTargetDistrict = async (req, res) => {
             start_date, 
             end_date, 
             status,
-            scheme_type = "Non-Scheme", // NEW
-            scheme_id = null            // NEW
+            scheme_type = "Non-Scheme", 
+            scheme_id = null            
         } = req.body;
 
         // Validation
@@ -182,11 +196,16 @@ exports.updateTargetDistrict = async (req, res) => {
             return res.status(400).json({ message: "Scheme ID is required for Scheme type" });
         }
 
+        // ===================== APPLIED DATE FORMAT HERE =====================
+        const finalStartDate = formatToDate(start_date);
+        const finalEndDate = formatToDate(end_date);
+        // ==================================================================
+
         await db.query(
             `UPDATE target_district 
              SET target_department_id = ?, district_id = ?, target_quantity = ?, start_date = ?, end_date = ?, status = ?, scheme_type = ?, scheme_id = ?
              WHERE id = ?`,
-            [target_department_id, district_id, target_quantity, start_date, end_date, status, scheme_type, scheme_id, id]
+            [target_department_id, district_id, target_quantity, finalStartDate, finalEndDate, status, scheme_type, scheme_id, id] // Used formatted dates
         );
 
         res.status(200).json({ message: "Target District updated successfully" });

@@ -3,6 +3,7 @@ const db = require('../../db');
 // ===================== CREATE TARGET PRODUCTION CENTER =====================
 // ===================== CREATE TARGET PRODUCTION CENTER =====================
 exports.createTargetProductionCenter = async (req, res) => {
+    console.log("=== REQ.USER DATA ===", req.user);
     try {
         const { 
             target_department_id, 
@@ -80,17 +81,50 @@ exports.createTargetProductionCenter = async (req, res) => {
 };
 
 // ===================== GET ALL TARGET PRODUCTION CENTERS =====================
+// ===================== GET ALL TARGET PRODUCTION CENTERS =====================
 exports.getAllTargetProductionCenters = async (req, res) => {
     try {
-        const { district_id, block_id } = req.query;
+        let uBlockId = null;
+        let uDistId = null;
 
+        // ---------------------------------------------------------
+        // STEP 1: GET BLOCK ID (Manual Fallback if req.user is missing)
+        // ---------------------------------------------------------
+        if (req.user) {
+            uBlockId = req.user.block_id;
+            uDistId = req.user.district_id;
+        } else {
+            try {
+                const authHeader = req.headers.authorization;
+                if (authHeader && authHeader.startsWith('Bearer ')) {
+                    const token = authHeader.split(' ')[1];
+                    // Decodes token without needing to know your secret key format
+                    const decoded = jwt.decode(token); 
+                    
+                    if (decoded?.id || decoded?.userId) {
+                        const userId = decoded.id || decoded.userId;
+                        const [userRow] = await db.query(`SELECT district_id, block_id FROM users_customuser WHERE id = ?`, [userId]);
+                        if (userRow.length > 0) {
+                            uDistId = userRow[0].district_id;
+                            uBlockId = userRow[0].block_id;
+                            console.log(`✅ Found Block ID ${uBlockId} from DB for user ${userId}`);
+                        }
+                    }
+                }
+            } catch (decodeErr) {
+                console.error("Manual JWT Decode Error:", decodeErr.message);
+            }
+        }
+
+        // ---------------------------------------------------------
+        // STEP 2: FETCH TARGETS
+        // ---------------------------------------------------------
+        let { district_id, block_id } = req.query;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
         let countQuery = `SELECT COUNT(*) as total FROM target_productioncenter tpc`;
-        
-        // CHANGED: 'JOIN target_department' -> 'LEFT JOIN target_department'
         let dataQuery = `
             SELECT tpc.*, 
                     tpc.scheme_type, 
@@ -101,7 +135,7 @@ exports.getAllTargetProductionCenters = async (req, res) => {
                     uc.username AS created_by_name,
                     s.name AS scheme_name
              FROM target_productioncenter tpc
-             LEFT JOIN target_department td ON tpc.target_department_id = td.id  /* <--- FIX HERE */
+             LEFT JOIN target_department td ON tpc.target_department_id = td.id  
              LEFT JOIN master_district md ON tpc.district_id = md.id
              LEFT JOIN master_block blk ON tpc.block_id = blk.id
              JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
@@ -109,50 +143,59 @@ exports.getAllTargetProductionCenters = async (req, res) => {
              LEFT JOIN tn_schema s ON tpc.scheme_id = s.id
         `;
 
-        
         const params = [];
         const countParams = [];
         let conditions = [];
 
-        // Filter Logic
-        if (district_id) {
-            conditions.push("tpc.district_id = ?");
-            params.push(district_id);
-            countParams.push(district_id);
-        }
-
-        if (block_id) {
+        // ✅ SECURITY: If we found a block_id, FORCE filter by it
+        if (uBlockId) {
             conditions.push("tpc.block_id = ?");
-            params.push(block_id);
-            countParams.push(block_id);
+            params.push(uBlockId);
+            countParams.push(uBlockId);
+        } else {
+            // Normal Admin filters
+            if (district_id) {
+                conditions.push("tpc.district_id = ?");
+                params.push(district_id);
+                countParams.push(district_id);
+            }
+            if (block_id) {
+                conditions.push("tpc.block_id = ?");
+                params.push(block_id);
+                countParams.push(block_id);
+            }
         }
 
-        // Append Conditions if any
         if (conditions.length > 0) {
             const whereClause = " WHERE " + conditions.join(" AND ");
             dataQuery += whereClause;
             countQuery += " WHERE " + conditions.join(" AND ");
         }
 
-        // Count Total
         const [countRows] = await db.query(countQuery, countParams);
         const total = countRows[0].total;
 
-        // Pagination
         dataQuery += " ORDER BY tpc.id DESC LIMIT ? OFFSET ?";
         params.push(limit, offset);
 
         const [rows] = await db.query(dataQuery, params);
 
-        res.status(200).json({
+        // ---------------------------------------------------------
+        // STEP 3: SEND RESPONSE WITH USER IDs
+        // ---------------------------------------------------------
+        const responsePayload = {
             data: rows,
-            pagination: {
-                total,
-                page,
-                limit,
-                totalPages: Math.ceil(total / limit)
-            }
-        });
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
+        };
+
+        // ✅ CRITICAL: Always send these back to the frontend
+        if (uBlockId) {
+            responsePayload.user_block_id = uBlockId;
+            responsePayload.user_district_id = uDistId;
+        }
+
+        res.status(200).json(responsePayload);
+
     } catch (err) {
         console.error("Get All Target Production Centers Error:", err);
         res.status(500).json({ error: err.message });
@@ -161,6 +204,7 @@ exports.getAllTargetProductionCenters = async (req, res) => {
 
 // ===================== GET TARGET PRODUCTION CENTER BY ID =====================
 exports.getTargetProductionCenterById = async (req, res) => {
+    console.log("🔍 FULL REQ.USER OBJECT:", req.user);
     try {
         const { id } = req.params;
         

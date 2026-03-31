@@ -136,7 +136,6 @@ const formatCenterData = (centers, certificates) => {
 
 exports.getProductionCenters = async (req, res) => {
     try {
-        // 1. Get Filters & Pagination from Query or User Object
         const user = req.user || {};
         const query = req.query;
 
@@ -146,43 +145,29 @@ exports.getProductionCenters = async (req, res) => {
         const limit = parseInt(query.limit) || 10;
         const offset = (page - 1) * limit;
 
-        // --- NEW FILTER PARAMS ---
-        const production_type = query.production_type; // 'government' or 'private'
-        const status = query.status; // 'approved', 'pending', 'rejected'
+        const production_type = query.production_type; 
+        const status = query.status; 
 
-        // Helper to parse comma-separated IDs or arrays from query
         const parseArrayParam = (param) => {
             if (!param) return [];
             if (Array.isArray(param)) return param.map(Number).filter(n => !isNaN(n));
             return param.toString().split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
         };
 
-        const department_ids = parseArrayParam(query.department_ids);
         const district_ids = parseArrayParam(query.district_ids);
         const block_ids = parseArrayParam(query.block_ids);
-        // -------------------------
 
-        // Role & Scope Determination
+        // Role & Scope
         const role = query.role || user.role;
-        const user_department_id = query.department_id || user.department_id;
         const user_district_id = query.district_id || user.district_id;
         const user_block_id = query.block_id || user.block_id;
 
-        // ---------------------------------------------------------
-        // 2. STRICT VALIDATION
-        // ---------------------------------------------------------
-        if (!role) {
-            return res.status(400).json({ success: false, error: "User role is required." });
-        }
+        if (!role) return res.status(400).json({ success: false, error: "User role is required." });
 
         let scopeFilter = 'all';
         let scopeId = null;
 
-        if (role === 'department_admin') {
-            if (!user_department_id) return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
-            scopeFilter = 'department';
-            scopeId = user_department_id;
-        } else if (role === 'district_admin') {
+        if (role === 'district_admin') {
             if (!user_district_id) return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
             scopeFilter = 'district';
             scopeId = user_district_id;
@@ -192,36 +177,28 @@ exports.getProductionCenters = async (req, res) => {
             scopeId = user_block_id;
         }
 
-        // Common Joins
+        // Joins — REMOVE department join
         const joins = `
             JOIN master_district d ON pc.district_id = d.id
             LEFT JOIN master_block b ON pc.block_id = b.id
             LEFT JOIN master_village v ON pc.village_id = v.id
-            LEFT JOIN department dept ON pc.department_id = dept.id
         `;
 
-        // ---------------------------------------------------------
-        // 3. SINGLE ITEM LOGIC (No Pagination)
-        // ---------------------------------------------------------
+        // SINGLE ITEM LOGIC
         if (id) {
             let singleQuery = `
                 SELECT 
                     pc.*, 
                     d.District_Name as district_name,
                     b.Block_Name as block_name,
-                    v.Village_Name as village_name,
-                    dept.name as department_name
+                    v.Village_Name as village_name
                 FROM productioncenter_productioncenter pc
                 ${joins}
                 WHERE pc.id = ?
             `;
             const params = [id];
 
-            // Apply Scope Check
-            if (scopeFilter === 'department') {
-                singleQuery += ' AND pc.department_id = ?';
-                params.push(scopeId);
-            } else if (scopeFilter === 'district') {
+            if (scopeFilter === 'district') {
                 singleQuery += ' AND pc.district_id = ?';
                 params.push(scopeId);
             } else if (scopeFilter === 'block') {
@@ -231,9 +208,7 @@ exports.getProductionCenters = async (req, res) => {
 
             const [centers] = await db.query(singleQuery, params);
 
-            if (centers.length === 0) {
-                return res.status(404).json({ success: false, error: "Production Center not found or access denied" });
-            }
+            if (centers.length === 0) return res.status(404).json({ success: false, error: "Production Center not found or access denied" });
 
             const [certs] = await db.query('SELECT id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id = ?', [id]);
             const formatted = formatCenterData(centers, certs);
@@ -241,19 +216,12 @@ exports.getProductionCenters = async (req, res) => {
             return res.json(formatted[0]);
         }
 
-        // ---------------------------------------------------------
-        // 4. LIST LOGIC (With Pagination & Filters)
-        // ---------------------------------------------------------
-        
-        // A. Build Base Conditions
+        // LIST LOGIC
         let whereClauses = ["1=1"];
         let params = [];
 
-        // Scope Filters (Existing Logic)
-        if (scopeFilter === 'department') {
-            whereClauses.push('pc.department_id = ?');
-            params.push(scopeId);
-        } else if (scopeFilter === 'district') {
+        // Scope Filters
+        if (scopeFilter === 'district') {
             whereClauses.push('pc.district_id = ?');
             params.push(scopeId);
         } else if (scopeFilter === 'block') {
@@ -261,78 +229,59 @@ exports.getProductionCenters = async (req, res) => {
             params.push(scopeId);
         }
 
-        
-        
-        // Existing Search Filter
+        // Search
         if (search) {
             whereClauses.push('(pc.name_of_production_centre LIKE ? OR pc.contact_person LIKE ? OR pc.mobile_number LIKE ?)');
             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
         }
 
-        // --- NEW FILTER LOGIC START ---
-        
-        // Filter by Production Type (Government/Private)
+        // Production type & status
         if (production_type) {
             whereClauses.push('pc.production_type = ?');
             params.push(production_type);
         }
-
-        // Filter by Status
         if (status) {
             whereClauses.push('pc.status = ?');
             params.push(status);
         }
 
-        // Filter by Multiple Departments
-        if (department_ids.length > 0) {
-            const placeholders = department_ids.map(() => '?').join(',');
-            whereClauses.push(`pc.department_id IN (${placeholders})`);
-            params.push(...department_ids);
-        }
-
-        // Filter by Multiple Districts
+        // Filter by district_ids / block_ids arrays
         if (district_ids.length > 0) {
             const placeholders = district_ids.map(() => '?').join(',');
             whereClauses.push(`pc.district_id IN (${placeholders})`);
             params.push(...district_ids);
         }
-
-        // Filter by Multiple Blocks
         if (block_ids.length > 0) {
             const placeholders = block_ids.map(() => '?').join(',');
             whereClauses.push(`pc.block_id IN (${placeholders})`);
             params.push(...block_ids);
         }
 
-        // --- NEW FILTER LOGIC END ---
-
         const whereString = whereClauses.join(' AND ');
 
-        // B. Get Total Count
+        // Total Count
         const countQuery = `SELECT COUNT(*) as total FROM productioncenter_productioncenter pc ${joins} WHERE ${whereString}`;
         const [countRows] = await db.query(countQuery, params);
         const totalCount = countRows[0].total;
 
-        // C. Get Paginated Data
+        // Paginated Data
         const dataQuery = `
             SELECT 
                 pc.*, 
                 d.District_Name as district_name,
                 b.Block_Name as block_name,
-                v.Village_Name as village_name,
-                dept.name as department_name
+                v.Village_Name as village_name
             FROM productioncenter_productioncenter pc
             ${joins}
             WHERE ${whereString}
             ORDER BY pc.id DESC
             LIMIT ? OFFSET ?
         `;
-        
         const dataParams = [...params, limit, offset];
 
         const [centers] = await db.query(dataQuery, dataParams);
-        
-        // D. Fetch Certificates
+
+        // Certificates
         const centerIds = centers.map(c => c.id);
         let certs = [];
         if (centerIds.length > 0) {
@@ -340,23 +289,20 @@ exports.getProductionCenters = async (req, res) => {
         }
 
         const formatted = formatCenterData(centers, certs);
-        
-        const responseData = {
+
+        res.json({
             total: totalCount,
-            page: page,
-            limit: limit,
+            page,
+            limit,
             count: formatted.length,
             results: formatted
-        };
-
-        res.json(responseData);
+        });
 
     } catch (err) {
         console.error("Error getProductionCenters:", err);
         res.status(500).json({ success: false, error: err.message });
     }
 };
-
 exports.createProductionCenter = async (req, res) => {
     const connection = await db.getConnection();
     try {

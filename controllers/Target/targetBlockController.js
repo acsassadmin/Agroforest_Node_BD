@@ -1,23 +1,60 @@
+
 const db = require('../../db');
+
+// ===================== SECURITY HELPERS =====================
+const getAuthUserDistrictId = (req) => req.user?.district_id || null;
+const getAuthUserDeptId = (req) => req.user?.department_id || null;
+const getAuthUserId = (req) => req.user?.id || null;
+
+const isDistrictAdmin = (req) => req.user?.role === 'district_admin';
+const isSuperAdmin = (req) => {
+  const role = req.user?.role;
+  return role === 'super_admin' || role === 'admin';
+};
+// =============================================================
+
+
 
 // ===================== CREATE TARGET BLOCK =====================
 exports.createTargetBlock = async (req, res) => {
   try {
+    // ✅ QUICK FIX: Fetch from DB if token is missing it
+    if (req.user && !req.user.district_id && req.user.id) {
+      const [userRow] = await db.query(`SELECT district_id, department_id, block_id FROM users_customuser WHERE id = ?`, [req.user.id]);
+      if (userRow.length > 0) {
+        req.user.district_id = userRow[0].district_id;
+        req.user.department_id = userRow[0].department_id;
+        req.user.block_id = userRow[0].block_id;
+      }
+    }
+
     const { 
-      target_department_id, 
-      district_id, 
       block_id, 
       target_quantity, 
       start_date, 
-      end_date, 
-      created_by,
-      scheme_type,   // NEW: "Scheme" or "Non-Scheme"
-      scheme_id      // NEW: ID or null
+      end_date,
+      scheme_type,   
+      scheme_id      
     } = req.body;
 
+    // ✅ SECURITY: Force IDs from token
+    let district_id = getAuthUserDistrictId(req);
+    let target_department_id = getAuthUserDeptId(req);
+    let created_by = getAuthUserId(req);
+
+    if (isSuperAdmin(req)) {
+      if (req.body.district_id) district_id = req.body.district_id;
+      if (req.body.target_department_id) target_department_id = req.body.target_department_id;
+      if (req.body.created_by) created_by = req.body.created_by;
+    }
+
+    if (!district_id) {
+      return res.status(403).json({ message: "Access denied: Cannot determine your district" });
+    }
+
     // 1. Basic Validation
-    if (!district_id || !block_id || !target_quantity || !start_date || !end_date || !created_by) {
-      return res.status(400).json({ message: "District, Block, Quantity, Dates, and User are required" });
+    if (!block_id || !target_quantity || !start_date || !end_date) {
+      return res.status(400).json({ message: "Block, Quantity, and Dates are required" });
     }
 
     // 2. Scheme Logic Validation
@@ -56,8 +93,8 @@ exports.createTargetBlock = async (req, res) => {
         start_date, 
         end_date, 
         created_by, 
-        scheme_type || "Non-Scheme", // Default to Non-Scheme
-        scheme_id || null            // Ensure null if undefined
+        scheme_type || "Non-Scheme", 
+        scheme_id || null
       ]
     );
 
@@ -68,20 +105,46 @@ exports.createTargetBlock = async (req, res) => {
   }
 };
 
+
 // ===================== GET ALL TARGET BLOCKS =====================
 exports.getAllTargetBlocks = async (req, res) => {
   try {
-    const { district_id } = req.query;
+    // ✅ QUICK FIX: Fetch from DB if token is missing it
+    if (req.user && !req.user.district_id && req.user.id) {
+      const [userRow] = await db.query(`SELECT district_id, department_id, block_id FROM users_customuser WHERE id = ?`, [req.user.id]);
+      if (userRow.length > 0) {
+        req.user.district_id = userRow[0].district_id;
+        req.user.department_id = userRow[0].department_id;
+        req.user.block_id = userRow[0].block_id;
+      }
+    }
+
+    // ✅ TEMPORARY DEBUG LOG
+    console.log("=== BLOCK GET ALL REQ.USER ===", req.user);
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
+    // ✅ SECURITY: Auto-filter based on role (Exact same logic as District)
+    let district_id = null;
+    
+    if (isDistrictAdmin(req)) {
+      district_id = getAuthUserDistrictId(req);
+      if (!district_id) {
+        return res.status(403).json({ message: "Access denied: Cannot determine your district" });
+      }
+    } else if (isSuperAdmin(req)) {
+      district_id = req.query.district_id || null; // Super admin can see all or filter
+    } else {
+      district_id = req.query.district_id || null;
+    }
+
     // Count Query
     let countQuery = `SELECT COUNT(*) as total FROM target_block tb`;
     const countParams = [];
 
-    // Data Query - Added scheme_type and JOIN with tn_schema
+    // Data Query
     let dataQuery = `
       SELECT 
         tb.id,
@@ -91,7 +154,7 @@ exports.getAllTargetBlocks = async (req, res) => {
         tb.target_quantity,
         tb.start_date,
         tb.end_date,
-        tb.scheme_type, /* ADDED */
+        tb.scheme_type, 
         td.department_id AS department_ref,
         md.District_Name AS district_name,
         blk.Block_Name AS block_name,
@@ -103,11 +166,10 @@ exports.getAllTargetBlocks = async (req, res) => {
       LEFT JOIN master_district md ON tb.district_id = md.id
       LEFT JOIN master_block blk ON tb.block_id = blk.id
       LEFT JOIN users_customuser uc ON tb.created_by = uc.id
-      LEFT JOIN tn_schema s ON tb.scheme_id = s.id /* ADDED */
+      LEFT JOIN tn_schema s ON tb.scheme_id = s.id 
     `;
     const params = [];
 
-    // Optional district filter
     if (district_id) {
       dataQuery += ` WHERE tb.district_id = ?`;
       countQuery += ` WHERE tb.district_id = ?`;
@@ -115,15 +177,12 @@ exports.getAllTargetBlocks = async (req, res) => {
       countParams.push(district_id);
     }
 
-    // Count total
     const [countRows] = await db.query(countQuery, countParams);
     const total = countRows[0].total;
 
-    // Pagination
     dataQuery += ` ORDER BY tb.id DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
-    // Fetch data
     const [rows] = await db.query(dataQuery, params);
 
     res.status(200).json({
@@ -140,6 +199,7 @@ exports.getAllTargetBlocks = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // ===================== GET TARGET BLOCK BY ID =====================
 exports.getTargetBlockById = async (req, res) => {
@@ -162,6 +222,15 @@ exports.getTargetBlockById = async (req, res) => {
         );
 
         if (rows.length === 0) return res.status(404).json({ message: "Target Block not found" });
+
+        // ✅ SECURITY: Ownership check
+        if (isDistrictAdmin(req)) {
+          const userDistId = getAuthUserDistrictId(req);
+          if (String(rows[0].district_id) !== String(userDistId)) {
+            return res.status(403).json({ message: "Access denied: You can only view your district's targets" });
+          }
+        }
+
         res.status(200).json(rows[0]);
     } catch (err) {
         console.error("Get Target Block By ID Error:", err);
@@ -169,33 +238,51 @@ exports.getTargetBlockById = async (req, res) => {
     }
 };
 
+
 // ===================== UPDATE TARGET BLOCK =====================
 exports.updateTargetBlock = async (req, res) => {
     try {
         const { id } = req.params;
         const { 
-          target_department_id, 
-          district_id, 
           block_id, 
           target_quantity, 
           start_date, 
           end_date,
-          scheme_type = "Non-Scheme", // Added
-          scheme_id = null            // Added
+          scheme_type = "Non-Scheme", 
+          scheme_id = null
         } = req.body;
 
+        // ✅ SECURITY: Force IDs from token
+        let district_id = getAuthUserDistrictId(req);
+        let target_department_id = getAuthUserDeptId(req);
+
+        if (isSuperAdmin(req)) {
+          if (req.body.district_id) district_id = req.body.district_id;
+          if (req.body.target_department_id) target_department_id = req.body.target_department_id;
+        }
+
+        if (!district_id) {
+          return res.status(403).json({ message: "Access denied: Cannot determine your district" });
+        }
+
         // Validation
-        if (!district_id || !block_id || !target_quantity || !start_date || !end_date) {
+        if (!block_id || !target_quantity || !start_date || !end_date) {
             return res.status(400).json({ message: "Missing required fields" });
         }
         
-        // Scheme Validation
         if (scheme_type === "Scheme" && !scheme_id) {
             return res.status(400).json({ message: "Scheme ID is required for Scheme type" });
         }
 
-        const [dist] = await db.query(`SELECT id FROM master_district WHERE id = ?`, [district_id]);
-        if (dist.length === 0) return res.status(400).json({ message: "Invalid district_id" });
+        // ✅ SECURITY: Verify ownership before updating
+        const [existingRecord] = await db.query(`SELECT * FROM target_block WHERE id = ?`, [id]);
+        if (existingRecord.length === 0) return res.status(404).json({ message: "Target Block not found" });
+
+        if (isDistrictAdmin(req)) {
+          if (String(existingRecord[0].district_id) !== String(district_id)) {
+            return res.status(403).json({ message: "Access denied: You can only update your district's targets" });
+          }
+        }
 
         const [blk] = await db.query(`SELECT id FROM master_block WHERE id = ?`, [block_id]);
         if (blk.length === 0) return res.status(400).json({ message: "Invalid block_id" });
@@ -225,10 +312,25 @@ exports.updateTargetBlock = async (req, res) => {
     }
 };
 
+
 // ===================== DELETE TARGET BLOCK =====================
 exports.deleteTargetBlock = async (req, res) => {
     try {
         const { id } = req.params;
+
+        // ✅ SECURITY: Verify ownership before delete
+        const [existingRecord] = await db.query(`SELECT * FROM target_block WHERE id = ?`, [id]);
+        if (existingRecord.length === 0) {
+          return res.status(404).json({ message: "Target Block not found" });
+        }
+
+        if (isDistrictAdmin(req)) {
+          const userDistId = getAuthUserDistrictId(req);
+          if (String(existingRecord[0].district_id) !== String(userDistId)) {
+            return res.status(403).json({ message: "Access denied: You can only delete your district's targets" });
+          }
+        }
+
         await db.query(`DELETE FROM target_block WHERE id = ?`, [id]);
         res.status(200).json({ message: "Target Block deleted successfully" });
     } catch (err) {

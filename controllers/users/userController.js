@@ -149,7 +149,7 @@ exports.login = async (req, res) => {
 
     // 1. Query with JOINs to get Role Name, Production Center ID, and Status
     // This query runs directly against the DB every time. No cache here.
-    const query = `
+   const query = `
       SELECT 
         u.id, 
         u.username, 
@@ -157,7 +157,10 @@ exports.login = async (req, res) => {
         u.role_id,
         r.name as role_name,
         pc.id as production_center_id,
-        pc.status as production_center_status
+        pc.status as production_center_status,
+        u.department_id,
+        u.district_id,
+        u.block_id
       FROM users_customuser u
       LEFT JOIN users_role r ON u.role_id = r.id
       LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
@@ -178,18 +181,21 @@ exports.login = async (req, res) => {
       return res.status(400).json({ error: "Wrong password" });
     }
 
-    // --- Define Secrets (Ideally use process.env) ---
+    // --- Define Secrets ---
     const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
 
-    // 3. Generate Access Token
-    // ⚠️ IMPORTANT: This token holds the role. If you change the role in DB,
-    // this token must be regenerated (User must Logout & Login).
     const accessToken = jwt.sign(
-      { id: user.id, role: user.role_name },
+      { 
+        id: user.id, 
+        role: user.role_name,
+        department_id: user.department_id,
+        district_id: user.district_id,
+        block_id: user.block_id
+      },
       JWT_SECRET,
       { expiresIn: '2h' }
-    );      
+    );
 
     const refreshToken = jwt.sign(
       { id: user.id },
@@ -197,7 +203,7 @@ exports.login = async (req, res) => {
       { expiresIn: '7d' }
     );
     
-    // 5. Send Response
+    // 5. Send Response (Added new fields here)
     res.json({
       access: accessToken,
       refresh: refreshToken,
@@ -205,7 +211,11 @@ exports.login = async (req, res) => {
       role: user.role_name,             
       user_name: user.username,
       production_center_id: user.production_center_id || null,
-      production_center_status: user.production_center_status || null
+      production_center_status: user.production_center_status || null,
+      // New fields added below:
+      department_id: user.department_id || null,
+      district_id: user.district_id || null,
+      block_id: user.block_id || null
     });
 
   } catch (err) {

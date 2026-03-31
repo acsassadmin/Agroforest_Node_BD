@@ -1,15 +1,16 @@
 const express = require('express');
 const router = express.Router();
 
+// ✅ ADD THIS LINE
+const authenticateToken = require('../middleware/authMiddleware'); 
+
 const targetBlockController = require('../controllers/Target/targetBlockController');
 
-// CRUD routes
-router.post('/', targetBlockController.createTargetBlock);
-router.get('/', targetBlockController.getAllTargetBlocks);
-router.get('/:id', targetBlockController.getTargetBlockById);
-router.put('/:id', targetBlockController.updateTargetBlock);
-router.delete('/:id', targetBlockController.deleteTargetBlock);
-
-
+// ✅ ADD authenticateToken TO ALL ROUTES
+router.post('/', authenticateToken, targetBlockController.createTargetBlock);
+router.get('/', authenticateToken, targetBlockController.getAllTargetBlocks);
+router.get('/:id', authenticateToken, targetBlockController.getTargetBlockById);
+router.put('/:id', authenticateToken, targetBlockController.updateTargetBlock);
+router.delete('/:id', authenticateToken, targetBlockController.deleteTargetBlock);
 
 module.exports = router;
