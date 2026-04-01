@@ -4,10 +4,10 @@ const router = express.Router();
 const masterController = require('../controllers/Masters/masterController');
 const authenticateToken = require('../middleware/authMiddleware');
 
-router.get('/blocks',authenticateToken ,  masterController.getBlocks);
+router.get('/blocks',   masterController.getBlocks);
 
-router.get('/villages',authenticateToken ,  masterController.getVillages);
+router.get('/villages',  masterController.getVillages);
 
-router.get('/districts', authenticateToken , masterController.getDistricts);
+router.get('/districts',  masterController.getDistricts);
 
 module.exports = router;

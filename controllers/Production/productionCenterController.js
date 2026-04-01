@@ -136,7 +136,6 @@ const formatCenterData = (centers, certificates) => {
 
 exports.getProductionCenters = async (req, res) => {
     try {
-        // 1. Get Filters & Pagination from Query or User Object
         const user = req.user || {};
         const query = req.query;
 
@@ -146,43 +145,29 @@ exports.getProductionCenters = async (req, res) => {
         const limit = parseInt(query.limit) || 10;
         const offset = (page - 1) * limit;
 
-        // --- NEW FILTER PARAMS ---
-        const production_type = query.production_type; // 'government' or 'private'
-        const status = query.status; // 'approved', 'pending', 'rejected'
+        const production_type = query.production_type; 
+        const status = query.status; 
 
-        // Helper to parse comma-separated IDs or arrays from query
         const parseArrayParam = (param) => {
             if (!param) return [];
             if (Array.isArray(param)) return param.map(Number).filter(n => !isNaN(n));
             return param.toString().split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
         };
 
-        const department_ids = parseArrayParam(query.department_ids);
         const district_ids = parseArrayParam(query.district_ids);
         const block_ids = parseArrayParam(query.block_ids);
-        // -------------------------
 
-        // Role & Scope Determination
+        // Role & Scope
         const role = query.role || user.role;
-        const user_department_id = query.department_id || user.department_id;
         const user_district_id = query.district_id || user.district_id;
         const user_block_id = query.block_id || user.block_id;
 
-        // ---------------------------------------------------------
-        // 2. STRICT VALIDATION
-        // ---------------------------------------------------------
-        if (!role) {
-            return res.status(400).json({ success: false, error: "User role is required." });
-        }
+        if (!role) return res.status(400).json({ success: false, error: "User role is required." });
 
         let scopeFilter = 'all';
         let scopeId = null;
 
-        if (role === 'department_admin') {
-            if (!user_department_id) return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
-            scopeFilter = 'department';
-            scopeId = user_department_id;
-        } else if (role === 'district_admin') {
+        if (role === 'district_admin') {
             if (!user_district_id) return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
             scopeFilter = 'district';
             scopeId = user_district_id;
@@ -192,36 +177,28 @@ exports.getProductionCenters = async (req, res) => {
             scopeId = user_block_id;
         }
 
-        // Common Joins
+        // Joins — REMOVE department join
         const joins = `
             JOIN master_district d ON pc.district_id = d.id
             LEFT JOIN master_block b ON pc.block_id = b.id
             LEFT JOIN master_village v ON pc.village_id = v.id
-            LEFT JOIN department dept ON pc.department_id = dept.id
         `;
 
-        // ---------------------------------------------------------
-        // 3. SINGLE ITEM LOGIC (No Pagination)
-        // ---------------------------------------------------------
+        // SINGLE ITEM LOGIC
         if (id) {
             let singleQuery = `
                 SELECT 
                     pc.*, 
                     d.District_Name as district_name,
                     b.Block_Name as block_name,
-                    v.Village_Name as village_name,
-                    dept.name as department_name
+                    v.Village_Name as village_name
                 FROM productioncenter_productioncenter pc
                 ${joins}
                 WHERE pc.id = ?
             `;
             const params = [id];
 
-            // Apply Scope Check
-            if (scopeFilter === 'department') {
-                singleQuery += ' AND pc.department_id = ?';
-                params.push(scopeId);
-            } else if (scopeFilter === 'district') {
+            if (scopeFilter === 'district') {
                 singleQuery += ' AND pc.district_id = ?';
                 params.push(scopeId);
             } else if (scopeFilter === 'block') {
@@ -231,9 +208,7 @@ exports.getProductionCenters = async (req, res) => {
 
             const [centers] = await db.query(singleQuery, params);
 
-            if (centers.length === 0) {
-                return res.status(404).json({ success: false, error: "Production Center not found or access denied" });
-            }
+            if (centers.length === 0) return res.status(404).json({ success: false, error: "Production Center not found or access denied" });
 
             const [certs] = await db.query('SELECT id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id = ?', [id]);
             const formatted = formatCenterData(centers, certs);
@@ -241,19 +216,12 @@ exports.getProductionCenters = async (req, res) => {
             return res.json(formatted[0]);
         }
 
-        // ---------------------------------------------------------
-        // 4. LIST LOGIC (With Pagination & Filters)
-        // ---------------------------------------------------------
-        
-        // A. Build Base Conditions
+        // LIST LOGIC
         let whereClauses = ["1=1"];
         let params = [];
 
-        // Scope Filters (Existing Logic)
-        if (scopeFilter === 'department') {
-            whereClauses.push('pc.department_id = ?');
-            params.push(scopeId);
-        } else if (scopeFilter === 'district') {
+        // Scope Filters
+        if (scopeFilter === 'district') {
             whereClauses.push('pc.district_id = ?');
             params.push(scopeId);
         } else if (scopeFilter === 'block') {
@@ -261,78 +229,59 @@ exports.getProductionCenters = async (req, res) => {
             params.push(scopeId);
         }
 
-        
-        
-        // Existing Search Filter
+        // Search
         if (search) {
             whereClauses.push('(pc.name_of_production_centre LIKE ? OR pc.contact_person LIKE ? OR pc.mobile_number LIKE ?)');
             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
         }
 
-        // --- NEW FILTER LOGIC START ---
-        
-        // Filter by Production Type (Government/Private)
+        // Production type & status
         if (production_type) {
             whereClauses.push('pc.production_type = ?');
             params.push(production_type);
         }
-
-        // Filter by Status
         if (status) {
             whereClauses.push('pc.status = ?');
             params.push(status);
         }
 
-        // Filter by Multiple Departments
-        if (department_ids.length > 0) {
-            const placeholders = department_ids.map(() => '?').join(',');
-            whereClauses.push(`pc.department_id IN (${placeholders})`);
-            params.push(...department_ids);
-        }
-
-        // Filter by Multiple Districts
+        // Filter by district_ids / block_ids arrays
         if (district_ids.length > 0) {
             const placeholders = district_ids.map(() => '?').join(',');
             whereClauses.push(`pc.district_id IN (${placeholders})`);
             params.push(...district_ids);
         }
-
-        // Filter by Multiple Blocks
         if (block_ids.length > 0) {
             const placeholders = block_ids.map(() => '?').join(',');
             whereClauses.push(`pc.block_id IN (${placeholders})`);
             params.push(...block_ids);
         }
 
-        // --- NEW FILTER LOGIC END ---
-
         const whereString = whereClauses.join(' AND ');
 
-        // B. Get Total Count
+        // Total Count
         const countQuery = `SELECT COUNT(*) as total FROM productioncenter_productioncenter pc ${joins} WHERE ${whereString}`;
         const [countRows] = await db.query(countQuery, params);
         const totalCount = countRows[0].total;
 
-        // C. Get Paginated Data
+        // Paginated Data
         const dataQuery = `
             SELECT 
                 pc.*, 
                 d.District_Name as district_name,
                 b.Block_Name as block_name,
-                v.Village_Name as village_name,
-                dept.name as department_name
+                v.Village_Name as village_name
             FROM productioncenter_productioncenter pc
             ${joins}
             WHERE ${whereString}
             ORDER BY pc.id DESC
             LIMIT ? OFFSET ?
         `;
-        
         const dataParams = [...params, limit, offset];
 
         const [centers] = await db.query(dataQuery, dataParams);
-        
-        // D. Fetch Certificates
+
+        // Certificates
         const centerIds = centers.map(c => c.id);
         let certs = [];
         if (centerIds.length > 0) {
@@ -340,23 +289,20 @@ exports.getProductionCenters = async (req, res) => {
         }
 
         const formatted = formatCenterData(centers, certs);
-        
-        const responseData = {
+
+        res.json({
             total: totalCount,
-            page: page,
-            limit: limit,
+            page,
+            limit,
             count: formatted.length,
             results: formatted
-        };
-
-        res.json(responseData);
+        });
 
     } catch (err) {
         console.error("Error getProductionCenters:", err);
         res.status(500).json({ success: false, error: err.message });
     }
 };
-
 exports.createProductionCenter = async (req, res) => {
     const connection = await db.getConnection();
     try {
@@ -515,90 +461,95 @@ exports.deleteProductionCenter = async (req, res) => {
 
 
 exports.getNearbyProductionCenters = async (req, res) => {
-    try {
-        const { farmer_id } = req.query;
+  try {
+    const { farmer_id } = req.query;
 
-        if (!farmer_id) {
-            return res.status(400).json({ error: "Farmer ID is required" });
-        }
-
-        // 1. Get Farmer Details (Location + Preferred Species)
-        const [farmers] = await db.query(
-            `SELECT village_id, block_id, district_id, species_preferred 
-             FROM users_farmeraathardetails 
-             WHERE farmer_id = ?`, 
-            [farmer_id]
-        );
-
-        if (farmers.length === 0) {
-            return res.status(404).json({ error: "Farmer not found" });
-        }
-
-        const farmer = farmers[0];
-        const { village_id, block_id, district_id, species_preferred } = farmer;
-
-        // 2. Parse Species Preferred (JSON string -> Array)
-        let preferredSpeciesIds = [];
-        try {
-            if (species_preferred) {
-                preferredSpeciesIds = JSON.parse(species_preferred);
-            }
-        } catch (e) {
-            console.error("Error parsing species_preferred JSON", e);
-        }
-
-        // If no species preferred, return empty result immediately
-        if (preferredSpeciesIds.length === 0) {
-            return res.json({ count: 0, results: [] });
-        }
-
-        // 3. Construct Main Query
-        // LOGIC CHANGE:
-        // - JOIN with 'productioncenter_stockdetails' -> This filters OUT centers that don't have the species.
-        // - Use 'DISTINCT' -> To prevent duplicate rows if a center has multiple matching species.
-        // - Proximity Score -> Used for sorting the filtered results.
-        
-        const query = `
-            SELECT DISTINCT
-                pc.*, 
-                d.District_Name as district_name,
-                b.Block_Name as block_name,
-                v.Village_Name as village_name,
-                -- Calculate Location Proximity Score
-                CASE 
-                    WHEN pc.village_id = ? THEN 3 
-                    WHEN pc.block_id = ? THEN 2 
-                    WHEN pc.district_id = ? THEN 1 
-                    ELSE 0 
-                END as proximity_score
-            FROM productioncenter_productioncenter pc
-            JOIN productioncenter_stockdetails sd ON pc.id = sd.production_center_id
-            LEFT JOIN master_district d ON pc.district_id = d.id
-            LEFT JOIN master_block b ON pc.block_id = b.id
-            LEFT JOIN master_village v ON pc.village_id = v.id
-            WHERE pc.status = 'approved' 
-              AND sd.species_id IN (?) -- ✅ Filter by preferred species IDs
-            ORDER BY proximity_score DESC, pc.id DESC
-        `;
-
-        const params = [
-            village_id,
-            block_id,
-            district_id,
-            preferredSpeciesIds // Pass the array of species IDs [15, 17, 18]
-        ];
-
-        const [centers] = await db.query(query, params);
-
-        res.json({ 
-            count: centers.length, 
-            results: centers 
-        });
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
+    if (!farmer_id) {
+      return res.status(400).json({ error: "Farmer ID is required" });
     }
+
+    const [farmers] = await db.query(
+      `SELECT latitude, longitude FROM users_farmeraathardetails WHERE user_id = ?`,
+      [farmer_id]
+    );
+
+    if (farmers.length === 0) {
+      return res.status(404).json({ error: "Farmer not found" });
+    }
+
+    const { latitude: farmerLat, longitude: farmerLng } = farmers[0];
+
+    if (farmerLat == null || farmerLng == null) {
+      return res.status(400).json({ error: "Farmer location not available" });
+    }
+
+    const query = `
+      SELECT 
+        pc.*,
+        d.District_Name AS district_name,
+        b.Block_Name AS block_name,
+        v.Village_Name AS village_name,
+        s.name AS species_name,
+        s.name_tamil AS species_name_tamil,
+        ps.saplings_available,
+        ps.sapling_age,
+        (6371 * acos(
+          LEAST(1, cos(radians(?)) * cos(radians(pc.latitude)) *
+          cos(radians(pc.longitude) - radians(?)) +
+          sin(radians(?)) * sin(radians(pc.latitude)))
+        )) AS distance_km
+      FROM productioncenter_productioncenter pc
+      LEFT JOIN master_district d ON pc.district_id = d.id
+      LEFT JOIN master_block b ON pc.block_id = b.id
+      LEFT JOIN master_village v ON pc.village_id = v.id
+      LEFT JOIN productioncenter_stockdetails ps ON ps.production_center_id = pc.id
+      LEFT JOIN tbl_agroforest_trees s ON s.id = ps.species_id
+      WHERE pc.status = 'approved'
+        AND pc.latitude IS NOT NULL
+        AND pc.longitude IS NOT NULL
+      ORDER BY distance_km ASC, pc.id ASC
+    `;
+
+    const params = [farmerLat, farmerLng, farmerLat];
+    const [centers] = await db.query(query, params);
+
+    const productionCentersMap = {};
+
+    centers.forEach(row => {
+      if (!productionCentersMap[row.id]) {
+        productionCentersMap[row.id] = {
+          ...row,
+          stock: []
+        };
+      }
+
+      if (row.species_name) {
+        productionCentersMap[row.id].stock.push({
+          species_name: row.species_name,
+          species_name_tamil: row.species_name_tamil,
+          saplings_available: row.saplings_available,
+          sapling_age: row.sapling_age
+        });
+      }
+    });
+
+    // ✅ Force sort after grouping — 0 km first → largest last
+    const result = Object.values(productionCentersMap).sort((a, b) => {
+      const distA = parseFloat(a.distance_km) || 99999;
+      const distB = parseFloat(b.distance_km) || 99999;
+      if (distA !== distB) return distA - distB;
+      return a.id - b.id;
+    });
+
+    return res.json({
+      count: result.length,
+      results: result
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 
@@ -610,19 +561,9 @@ exports.getDistrictSummary = async (req, res) => {
             ORDER BY District_Name ASC
         `);
 
-        const [speciesList] = await db.query(`
-            SELECT id, name AS species_name 
-            FROM tbl_agroforest_trees 
-            ORDER BY id ASC
-        `);
-
         const districtSummaries = [];
 
         for (const district of districts) {
-
-            // ❌ OLD: WHERE district = ? ... [district.id]
-            // ✅ FIXED: Assuming the production center table stores the NAME, not the ID.
-            // If your DB stores IDs, change this back to district.id.
             const [centers] = await db.query(`
                 SELECT id 
                 FROM productioncenter_productioncenter 
@@ -632,61 +573,47 @@ exports.getDistrictSummary = async (req, res) => {
             const productionCenterCount = centers.length;
             const centerIds = centers.map(c => c.id);
 
-            // Initialize default structure
-            const saplingsPerDistrict = speciesList.map(s => ({
-                species_id: s.id,
-                species_name: s.species_name,
-                total_quantity: 0
-            }));
-
             let totalSaplings = 0;
             let totalSales = 0;
             let totalTarget = 0;
+            let districtSaplings = []; // ✅ Empty array instead of fetching all species
 
             if (centerIds.length > 0) {
-
+                // ✅ CHANGED: Only select t.id and t.name, no need for a separate species query
                 const [saplings] = await db.query(`
-  SELECT t.name AS species_name,
-         SUM(s.saplings_available) AS total_quantity,
-         SUM(s.saplings_available * s.price_per_sapling) AS sales
-  FROM productioncenter_stockdetails s
-  JOIN tbl_agroforest_trees t ON s.species_id = t.id
-  WHERE s.production_center_id IN (?)
-  GROUP BY t.name
-`, [centerIds]);
-                // ✅ FIXED MATCHING: Case-insensitive and trim whitespace
-                saplingsPerDistrict.forEach(s => {
-                    const match = saplings.find(sp => 
-                        sp.species_name && 
-                        s.species_name && 
-                        sp.species_name.toLowerCase().trim() === s.species_name.toLowerCase().trim()
-                    );
-                    
-                    if (match) {
-                        // Ensure values are Numbers
-                        const qty = Number(match.total_quantity) || 0;
-                        const sale = Number(match.sales) || 0;
+                    SELECT 
+                        t.id AS species_id,
+                        t.name AS species_name,
+                        SUM(s.saplings_available) AS total_quantity,
+                        SUM(s.saplings_available * s.price_per_sapling) AS sales
+                    FROM productioncenter_stockdetails s
+                    JOIN tbl_agroforest_trees t ON s.species_id = t.id
+                    WHERE s.production_center_id IN (?)
+                    GROUP BY t.id, t.name
+                `, [centerIds]);
 
-                        s.total_quantity = qty;
-                        totalSaplings += qty;
-                        totalSales += sale;
-                    }
+                districtSaplings = saplings;
+
+                // Calculate totals directly from the result
+                saplings.forEach(row => {
+                    totalSaplings += Number(row.total_quantity) || 0;
+                    totalSales += Number(row.sales) || 0;
                 });
 
                 const [targets] = await db.query(`
-                SELECT SUM(target_quantity) AS total_target
-                FROM target_district
-                WHERE district_id = ?
-            `, [district.id]);
+                    SELECT SUM(target_quantity) AS total_target
+                    FROM target_district
+                    WHERE district_id = ?
+                `, [district.id]);
 
-            totalTarget = targets[0]?.total_target || 0;
+                totalTarget = targets[0]?.total_target || 0;
             }
 
             districtSummaries.push({
                 district_id: district.id,
                 district_name: district.District_Name,
                 production_center_count: productionCenterCount,
-                saplings: saplingsPerDistrict.filter(s => s.total_quantity > 0), 
+                saplings: districtSaplings, 
                 total_stock_saplings: totalSaplings,
                 total_sales_price: totalSales,
                 total_target: totalTarget
@@ -703,77 +630,7 @@ exports.getDistrictSummary = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
-exports.getSingleDistrictSummary = async (req, res) => {
-    try {
-        // 1. Get district_id from Query Parameters (e.g., ?district_id=2)
-        const { district_id } = req.query;
 
-        if (!district_id) {
-            return res.status(400).json({ error: "district_id query parameter is required" });
-        }
-
-        // 2. Get District Name
-        const [districtRows] = await db.query(`SELECT District_Name FROM master_district WHERE id = ?`, [district_id]);
-        if (districtRows.length === 0) {
-            return res.status(404).json({ error: "District not found" });
-        }
-        const districtName = districtRows[0].District_Name;
-
-        // 3. Define Queries
-        const statsQuery = `
-            SELECT 
-                COUNT(DISTINCT pc.id) AS total_production_centers,
-                COALESCE(SUM(ps.saplings_available), 0) AS total_stock_count,
-                COALESCE(SUM(ps.total_selled), 0) AS total_sales_count,
-                COALESCE(SUM(ps.total_selled_price), 0) AS total_sale_price
-            FROM productioncenter_productioncenter pc
-            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-            WHERE pc.district_id = ? 
-        `;
-
-        const targetQuery = `
-            SELECT COALESCE(SUM(tp.target_quantity), 0) AS total_target
-            FROM target_productioncenter tp
-            JOIN productioncenter_productioncenter pc ON tp.productioncenter_id = pc.id
-            WHERE pc.district_id = ?
-        `;
-
-        const saplingsQuery = `
-            SELECT 
-                t.s_name, 
-                SUM(ps.saplings_available) AS count
-            FROM productioncenter_stockdetails ps
-            JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
-            JOIN tbl_agroforest_trees t ON ps.species_id = t.id
-            WHERE pc.district_id = ? 
-            GROUP BY t.s_name
-        `;
-
-        // 4. Run in Parallel
-        const [[statsResult], [targetResult], [saplingsResult]] = await Promise.all([
-            db.query(statsQuery, [district_id]),
-            db.query(targetQuery, [district_id]),
-            db.query(saplingsQuery, [district_id])
-        ]);
-
-        // 5. Construct Payload
-        const responseData = {
-            district: districtName,
-            saplings: saplingsResult,
-            total_production_centers: statsResult[0].total_production_centers || 0,
-            total_stock_sapling: statsResult[0].total_stock_count,     
-            total_sale_saplingcount: statsResult[0].total_sales_count,  
-            total_sale_price: statsResult[0].total_sale_price,
-            target: targetResult[0].total_target
-        };
-
-        res.status(200).json(responseData);
-
-    } catch (err) {
-        console.error("Get Single District Summary Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-};
 
 exports.getBlockSummary = async (req, res) => {
     try {
@@ -993,77 +850,297 @@ exports.getProductionCenterSummary = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
-exports.getSingleProductionCenterSummary = async (req, res) => {
+
+exports.getDistrictSaplingSummary = async (req, res) => {
     try {
-        const { center_id } = req.query;
+        const [saplings] = await db.query(`
+            SELECT 
+                t.name AS sapling_name,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT pc.district_id ORDER BY pc.district_id ASC) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved'
+                ) AS district_id,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT s.production_center_id ORDER BY s.production_center_id ASC) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved'
+                ) AS productioncenter_id,
+                COALESCE((
+                    SELECT SUM(s.saplings_available) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved'
+                ), 0) AS total_stock,
+                
+                COALESCE((
+                    SELECT SUM(s.total_selled) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved'
+                ), 0) AS total_sold,
+                
+                COALESCE((
+                    SELECT SUM(s.saplings_available * s.price_per_sapling) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved'
+                ), 0) AS total_sale_price
+            FROM tbl_agroforest_trees t
+            ORDER BY t.name ASC
+        `);
 
-        if (!center_id) {
-            return res.status(400).json({ error: "center_id query parameter is required" });
+        let districtMap = {};
+        let centerMap = {};
+
+        try {
+            const [districts] = await db.query(`SELECT id, District_Name FROM master_district`);
+            districts.forEach(d => {
+                const nameKey = Object.keys(d).find(key => key.toLowerCase() !== 'id');
+                if (nameKey) districtMap[String(d.id)] = d[nameKey];
+            });
+        } catch (err) {
+            console.error("District fetch failed:", err.message);
         }
 
-        // FIX: Changed column name to 'name_of_production_centre'
-        const [centerRows] = await db.query(`
-            SELECT name_of_production_centre 
-            FROM productioncenter_productioncenter 
-            WHERE id = ?
-        `, [center_id]);
-        
-        if (centerRows.length === 0) {
-            return res.status(404).json({ error: "Production Center not found" });
+        try {
+            const [centers] = await db.query(`SELECT id, name_of_production_centre FROM productioncenter_productioncenter`);
+            centers.forEach(c => {
+                const nameKey = Object.keys(c).find(key => key.toLowerCase() !== 'id');
+                if (nameKey) centerMap[String(c.id)] = c[nameKey];
+            });
+        } catch (err) {
+            console.error("Center fetch failed:", err.message);
         }
-        
-        // FIX: Accessing the correct column name
-        const centerName = centerRows[0].name_of_production_centre;
 
-        const statsQuery = `
-            SELECT 
-                COUNT(DISTINCT pc.id) AS total_centers,
-                COALESCE(SUM(ps.saplings_available), 0) AS total_stock_count,
-                COALESCE(SUM(ps.total_selled), 0) AS total_sales_count,
-                COALESCE(SUM(ps.total_selled_price), 0) AS total_sale_price
-            FROM productioncenter_productioncenter pc
-            LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-            WHERE pc.id = ? 
-        `;
+                const processedSaplings = saplings.map(item => {
+            // --- CHANGED: Map to array of objects so frontend gets both ID and Name ---
+            let districtData = [];
+            if (item.district_id) {
+                districtData = item.district_id.split(',').map(id => {
+                    const cleanId = id.trim();
+                    return { id: cleanId, name: districtMap[cleanId] || `ID:${cleanId}` };
+                });
+            }
 
-        const targetQuery = `
-            SELECT COALESCE(SUM(tp.target_quantity), 0) AS total_target
-            FROM target_productioncenter tp
-            JOIN productioncenter_productioncenter pc ON tp.productioncenter_id = pc.id
-            WHERE pc.id = ?
-        `;
+            let centerNames = null;
+            if (item.productioncenter_id) {
+                centerNames = item.productioncenter_id.split(',').map(id => centerMap[String(id.trim())] || `ID:${id.trim()}`).join(',');
+            }
 
-        const saplingsQuery = `
-            SELECT 
-                t.s_name, 
-                SUM(ps.saplings_available) AS count
-            FROM productioncenter_stockdetails ps
-            JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
-            JOIN tbl_agroforest_trees t ON ps.species_id = t.id
-            WHERE pc.id = ? 
-            GROUP BY t.s_name
-        `;
+            return {
+                ...item,
+                district_names: districtData, // Now sends [{id: "2", name: "Chennai"}]
+                center_names: centerNames
+            };
+        });
 
-        const [[statsResult], [targetResult], [saplingsResult]] = await Promise.all([
-            db.query(statsQuery, [center_id]),
-            db.query(targetQuery, [center_id]),
-            db.query(saplingsQuery, [center_id])
-        ]);
-
-        const responseData = {
-            center: centerName,
-            saplings: saplingsResult,
-            total_production_centers: statsResult[0].total_centers || 0,
-            total_stock_sapling: statsResult[0].total_stock_count,     
-            total_sale_saplingcount: statsResult[0].total_sales_count,  
-            total_sale_price: statsResult[0].total_sale_price,
-            target: targetResult[0].total_target
-        };
-
-        res.status(200).json(responseData);
+        res.json({
+            count: processedSaplings.length,
+            saplings: processedSaplings
+        });
 
     } catch (err) {
-        console.error("Get Single Production Center Summary Error:", err);
+        console.error("Main Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+
+exports.getBlockSaplingSummary = async (req, res) => {
+    try {
+        const { dist_id } = req.query;
+        if (!dist_id) return res.status(400).json({ error: "District ID is required" });
+
+        const [saplings] = await db.query(`
+            SELECT 
+                t.name AS sapling_name,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT pc.block_id ORDER BY pc.block_id ASC) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.district_id = ?
+                ) AS block_id,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT s.production_center_id ORDER BY s.production_center_id ASC) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.district_id = ?
+                ) AS productioncenter_id,
+                COALESCE((
+                    SELECT SUM(s.saplings_available) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.district_id = ?
+                ), 0) AS total_stock,
+                COALESCE((
+                    SELECT SUM(s.total_selled) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.district_id = ?
+                ), 0) AS total_sold,
+                COALESCE((
+                    SELECT SUM(s.total_selled * s.price_per_sapling) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.district_id = ?
+                ), 0) AS total_sale_price
+            FROM tbl_agroforest_trees t
+            ORDER BY t.name ASC
+        `, [dist_id, dist_id, dist_id, dist_id, dist_id]);
+
+        // Fetch all blocks for this district for the dropdown list
+                // FOOLPROOF DROPDOWN FETCH: Joins with master_district using the ID from the URL
+               // FOOLPROOF DROPDOWN FETCH: Gets blocks by checking which ones have approved centers in this district
+        let blockQuery = `
+            SELECT DISTINCT mb.id, mb.Block_Name 
+            FROM productioncenter_productioncenter pc
+            JOIN master_block mb ON pc.block_id = mb.id
+            WHERE pc.district_id = ? AND pc.status = 'approved'
+            ORDER BY mb.Block_Name ASC
+        `;
+        const [blocks] = await db.query(blockQuery, [dist_id]);
+        blockQuery += " ORDER BY b.Block_Name ASC";
+
+        let blockMap = {};
+        let centerMap = {};
+
+        // Bulletproof Block Name Fetch
+        try {
+            const [allBlocks] = await db.query(`SELECT id, Block_Name FROM master_block`);
+            allBlocks.forEach(b => {
+                const nameKey = Object.keys(b).find(key => key.toLowerCase() !== 'id');
+                if (nameKey) blockMap[String(b.id)] = b[nameKey];
+            });
+        } catch (err) {
+            console.error("Block fetch error:", err.message);
+        }
+
+        // Bulletproof Center Name Fetch
+        try {
+            const [centers] = await db.query(`SELECT id, name_of_production_centre FROM productioncenter_productioncenter`);
+            centers.forEach(c => {
+                const nameKey = Object.keys(c).find(key => key.toLowerCase() !== 'id');
+                if (nameKey) centerMap[String(c.id)] = c[nameKey];
+            });
+        } catch (err) {
+            console.error("Center fetch error:", err.message);
+        }
+
+        // Map IDs to Objects
+        const processedSaplings = saplings.map((item, index) => {
+            let blockData = [];
+            if (item.block_id) {
+                blockData = item.block_id.split(',').map(id => {
+                    const cleanId = id.trim();
+                    return { id: cleanId, name: blockMap[cleanId] || `ID:${cleanId}` };
+                });
+            }
+
+            let centerNames = null;
+            if (item.productioncenter_id) {
+                centerNames = item.productioncenter_id.split(',').map(id => centerMap[String(id.trim())] || `ID:${id.trim()}`).join(',');
+            }
+
+            return {
+                id: index + 1,
+                sno: index + 1,
+                ...item,
+                block_names: blockData, 
+                center_names: centerNames
+            };
+        });
+
+        res.json({
+            count: processedSaplings.length,
+            saplings: processedSaplings,
+            all_blocks: blocks // <--- THIS IS THE ONLY NEW LINE ADDED FOR THE DROPDOWN
+        });
+
+    } catch (err) {
+        console.error("Block Sapling Summary Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+
+exports.getProductionCenterSaplingSummary = async (req, res) => {
+    try {
+        const { block_id } = req.query;
+        if (!block_id) return res.status(400).json({ error: "Block ID is required" });
+
+        // Passing block_id 4 times for the 4 subqueries
+        const [saplings] = await db.query(`
+            SELECT 
+                t.name AS sapling_name,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT s.production_center_id ORDER BY s.production_center_id ASC) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.block_id = ?
+                ) AS productioncenter_id,
+                COALESCE((
+                    SELECT SUM(s.saplings_available) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.block_id = ?
+                ), 0) AS total_stock,
+                COALESCE((
+                    SELECT SUM(s.total_selled) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.block_id = ?
+                ), 0) AS total_sold,
+                COALESCE((
+                    SELECT SUM(s.total_selled * s.price_per_sapling) 
+                    FROM productioncenter_stockdetails s
+                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                    WHERE s.species_id = t.id AND pc.status = 'approved' AND pc.block_id = ?
+                ), 0) AS total_sale_price
+            FROM tbl_agroforest_trees t
+            ORDER BY t.name ASC
+        `, [block_id, block_id, block_id, block_id]);
+
+        let centerMap = {};
+
+        // Bulletproof Center Name Fetch
+        try {
+            const [centers] = await db.query(`SELECT id, name_of_production_centre FROM productioncenter_productioncenter`);
+            centers.forEach(c => {
+                const nameKey = Object.keys(c).find(key => key.toLowerCase() !== 'id');
+                if (nameKey) centerMap[String(c.id)] = c[nameKey];
+            });
+        } catch (err) {
+            console.error("Center fetch error:", err.message);
+        }
+
+        // Map IDs to Objects
+        const processedSaplings = saplings.map((item, index) => {
+            let centerData = [];
+            if (item.productioncenter_id) {
+                centerData = item.productioncenter_id.split(',').map(id => {
+                    const cleanId = id.trim();
+                    return { id: cleanId, name: centerMap[cleanId] || `ID:${cleanId}` };
+                });
+            }
+
+            return {
+                id: index + 1,
+                sno: index + 1,
+                ...item,
+                center_names: centerData // Array of objects for frontend
+            };
+        });
+
+        res.json({
+            count: processedSaplings.length,
+            saplings: processedSaplings
+        });
+
+    } catch (err) {
+        console.error("Production Center Sapling Summary Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

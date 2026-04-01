@@ -1,178 +1,163 @@
 const db = require('../../db');
+const jwt = require('jsonwebtoken');
+
+// Helper to get User ID from req or token
+const getUserId = (req) => {
+    if (req.user?.id) return req.user.id;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.decode(token);
+        return decoded?.id || decoded?.userId;
+    }
+    return null;
+};
 
 // ===================== CREATE TARGET BLOCK =====================
 exports.createTargetBlock = async (req, res) => {
     try {
-        // 1. Destructure district_id and block_id
-        const { target_department_id, district_id, block_id, target_quantity, start_date, end_date, created_by } = req.body;
+        const userId = req.user.id;
+        const [userRow] = await db.query(
+            `SELECT district_id FROM users_customuser WHERE id = ?`, 
+            [userId]
+        );
 
-        // 2. Validation
-        if (!target_department_id || !district_id || !block_id || !target_quantity || !start_date || !end_date || !created_by) {
-            return res.status(400).json({ message: "Department, District, Block, Quantity, Dates, and Creator are required" });
-        }
+        if (userRow.length === 0) return res.status(404).json({ message: "User not found" });
+        const { district_id } = userRow[0];
 
-        // Check if target_department_id exists
-        const [dept] = await db.query(`SELECT id FROM target_department WHERE id = ?`, [target_department_id]);
-        if (dept.length === 0) return res.status(400).json({ message: "Invalid target_department_id" });
+        const { block_id, target_quantity, start_date, end_date, scheme_type, scheme_id } = req.body;
 
-        // Check if district exists
-        const [dist] = await db.query(`SELECT id FROM master_district WHERE id = ?`, [district_id]);
-        if (dist.length === 0) return res.status(400).json({ message: "Invalid district_id" });
-
-        // Check if block exists
-        const [blk] = await db.query(`SELECT id FROM master_block WHERE id = ?`, [block_id]);
-        if (blk.length === 0) return res.status(400).json({ message: "Invalid block_id" });
-
-        // Check for existing target in date range
+        // --- NEW: DUPLICATE CHECK LOGIC ---
         const [existing] = await db.query(
-            `SELECT * FROM target_block 
-             WHERE target_department_id = ? AND district_id = ? AND block_id = ? 
-             AND ((? BETWEEN start_date AND end_date) OR (? BETWEEN start_date AND end_date))`,
-            [target_department_id, district_id, block_id, start_date, end_date]
+            `SELECT id FROM target_block 
+             WHERE block_id = ? 
+             AND start_date = ? 
+             AND scheme_type = ? 
+             AND (scheme_id = ? OR (scheme_id IS NULL AND ? IS NULL))`,
+            [block_id, start_date, scheme_type, scheme_id, scheme_id]
         );
 
         if (existing.length > 0) {
-            return res.status(400).json({ message: "Target already exists for this block in this date range" });
+            return res.status(400).json({ 
+                message: "A target for this block and scheme already exists for this period." 
+            });
         }
+        // --- END OF CHECK ---
 
-        // 3. Insert Data
-        const [result] = await db.query(
-            `INSERT INTO target_block 
-            (target_department_id, district_id, block_id, target_quantity, start_date, end_date, created_by) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [target_department_id, district_id, block_id, target_quantity, start_date, end_date, created_by]
+        await db.query(
+            `INSERT INTO target_block (district_id, block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, created_by) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [district_id, block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, userId]
         );
 
-        res.status(201).json({ message: "Target Block created successfully", target_id: result.insertId });
-
+        res.status(201).json({ message: "Created successfully" });
     } catch (err) {
-        console.error("Create Target Block Error:", err);
+        console.error(err);
         res.status(500).json({ error: err.message });
     }
 };
+// controllers/Target/targetBlockController.js
 
-// ===================== GET ALL TARGET BLOCKS =====================
 exports.getAllTargetBlocks = async (req, res) => {
     try {
-        const { district_id } = req.query;
+        const userId = req.user.id;
+        const [userRow] = await db.query(`SELECT district_id FROM users_customuser WHERE id = ?`, [userId]);
+        const uDistId = userRow[0].district_id;
 
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        const offset = (page - 1) * limit;
+        // ✅ FETCH ALL ALLOCATIONS for this district (Individual rows for each scheme)
+        const [districtAllocations] = await db.query(
+            `SELECT scheme_type, scheme_id, target_quantity 
+             FROM target_district 
+             WHERE district_id = ? AND YEAR(start_date) = YEAR(CURDATE())`, 
+            [uDistId]
+        );
 
-        // Count Query
-        let countQuery = `SELECT COUNT(*) as total FROM target_block tb`;
-        let dataQuery = `
-            SELECT tb.*, 
-                   td.id AS department_id, 
-                   md.District_Name AS district_name,
-                   blk.Block_Name AS block_name,
-                   uc.username AS created_by_name
+        const [rows] = await db.query(`
+            SELECT tb.*, b.Block_Name as block_name, s.name as scheme_name
             FROM target_block tb
-            JOIN target_department td ON tb.target_department_id = td.id
-            LEFT JOIN master_district md ON tb.district_id = md.id
-            LEFT JOIN master_block blk ON tb.block_id = blk.id
-            LEFT JOIN users_customuser uc ON tb.created_by = uc.id
-        `;
-
-        const params = [];
-        const countParams = [];
-
-        // Filter Logic
-        if (district_id) {
-            dataQuery += " WHERE tb.district_id = ?";
-            countQuery += " WHERE district_id = ?";
-            params.push(district_id);
-            countParams.push(district_id);
-        }
-
-        const [countRows] = await db.query(countQuery, countParams);
-        const total = countRows[0].total;
-
-        dataQuery += " LIMIT ? OFFSET ?";
-        params.push(limit, offset);
-
-        const [rows] = await db.query(dataQuery, params);
+            LEFT JOIN master_block b ON tb.block_id = b.id
+            LEFT JOIN tn_schema s ON tb.scheme_id = s.id
+            WHERE tb.district_id = ?`, [uDistId]);
 
         res.status(200).json({
             data: rows,
-            pagination: {
-                total,
-                page,
-                limit,
-                totalPages: Math.ceil(total / limit)
-            }
+            district_allocations: districtAllocations, // ✅ Send the array of limits
+            user_district_id: uDistId
         });
     } catch (err) {
-        console.error("Get All Target Blocks Error:", err);
         res.status(500).json({ error: err.message });
     }
 };
-
-// ===================== GET TARGET BLOCK BY ID =====================
-exports.getTargetBlockById = async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const [rows] = await db.query(
-            `SELECT tb.*, 
-                    md.District_Name AS district_name,
-                    blk.Block_Name AS block_name,
-                    uc.username AS created_by_name 
-             FROM target_block tb
-             LEFT JOIN master_district md ON tb.district_id = md.id
-             LEFT JOIN master_block blk ON tb.block_id = blk.id
-             LEFT JOIN users_customuser uc ON tb.created_by = uc.id
-             WHERE tb.id = ?`, 
-             [id]
-        );
-
-        if (rows.length === 0) return res.status(404).json({ message: "Target Block not found" });
-        res.status(200).json(rows[0]);
-    } catch (err) {
-        console.error("Get Target Block By ID Error:", err);
-        res.status(500).json({ error: err.message });
-    }
-};
-
 // ===================== UPDATE TARGET BLOCK =====================
 exports.updateTargetBlock = async (req, res) => {
     try {
         const { id } = req.params;
-        const { target_department_id, district_id, block_id, target_quantity, start_date, end_date } = req.body;
+        const { 
+            block_id, 
+            target_quantity, 
+            start_date, 
+            end_date, 
+            scheme_type, 
+            scheme_id,
+            district_id 
+        } = req.body;
 
-        // Check valid foreign keys
-        const [dept] = await db.query(`SELECT id FROM target_department WHERE id = ?`, [target_department_id]);
-        if (dept.length === 0) return res.status(400).json({ message: "Invalid target_department_id" });
+        // 🔍 Log the body to see what is arriving
+        console.log("Updating ID:", id, "with data:", req.body);
 
-        const [dist] = await db.query(`SELECT id FROM master_district WHERE id = ?`, [district_id]);
-        if (dist.length === 0) return res.status(400).json({ message: "Invalid district_id" });
-
-        const [blk] = await db.query(`SELECT id FROM master_block WHERE id = ?`, [block_id]);
-        if (blk.length === 0) return res.status(400).json({ message: "Invalid block_id" });
-
-        await db.query(
+        const [result] = await db.query(
             `UPDATE target_block 
-             SET target_department_id = ?, district_id = ?, block_id = ?, target_quantity = ?, start_date = ?, end_date = ?
+             SET block_id = ?, target_quantity = ?, start_date = ?, 
+                 end_date = ?, scheme_type = ?, scheme_id = ?, district_id = ?
              WHERE id = ?`,
-            [target_department_id, district_id, block_id, target_quantity, start_date, end_date, id]
+            [block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, district_id, id]
         );
 
-        res.status(200).json({ message: "Target Block updated successfully" });
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Record not found" });
+        }
+
+        res.status(200).json({ message: "Updated successfully" });
     } catch (err) {
-        console.error("Update Target Block Error:", err);
+        console.error("UPDATE ERROR:", err);
+        
+        // Handle Foreign Key Error specifically
+        if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(500).json({ 
+                message: "Cannot edit/delete: This block is already linked to Panchayat targets or Reports." 
+            });
+        }
+
         res.status(500).json({ error: err.message });
     }
 };
 
 // ===================== DELETE TARGET BLOCK =====================
+// controllers/Target/targetBlockController.js
+
 exports.deleteTargetBlock = async (req, res) => {
     try {
         const { id } = req.params;
-        await db.query(`DELETE FROM target_block WHERE id = ?`, [id]);
-        res.status(200).json({ message: "Target Block deleted successfully" });
+        
+        if (!id) {
+            return res.status(400).json({ message: "ID is required" });
+        }
+
+        const [result] = await db.query(`DELETE FROM target_block WHERE id = ?`, [id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Record not found" });
+        }
+
+        res.status(200).json({ message: "Deleted successfully" });
     } catch (err) {
-        console.error("Delete Target Block Error:", err);
+        console.error("DELETE ERROR:", err);
+        // Check if it's a foreign key error (Error Code 1451)
+        if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(500).json({ 
+                message: "Cannot delete: This block target is linked to other records (Panchayats/Reports)." 
+            });
+        }
         res.status(500).json({ error: err.message });
     }
 };
