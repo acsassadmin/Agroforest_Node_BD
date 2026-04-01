@@ -1412,10 +1412,74 @@ exports.getWeeklyFarmerRequestReport = async (req, res) => {
     }
 };
 
+// exports.getProductionCentersList = async (req, res) => {
+//     try {
+//         console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
+        
+//         // 1. Get user info for filtering
+//         const { role, district_id, block_id } = req.user;
+//         console.log("🔐 User Role:", role);
+
+//         // 2. Construct Query
+//         // We select center details and SUM the saplings_available from the stock table.
+//         // LEFT JOIN ensures we show centers even if they have 0 stock.
+//         let query = `
+//   SELECT 
+//     pc.id,
+//     pc.name_of_production_centre,
+//     pc.complete_address,
+//     pc.status,
+//     pc.district_id,
+//     md.District_Name AS District_Name,
+//     pc.production_type,
+//     COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
+//   FROM productioncenter_productioncenter pc
+//   LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+//   LEFT JOIN master_district md ON pc.district_id = md.id
+// `;
+
+//         const params = [];
+
+//         // 3. Apply Role-Based Filters
+//         // These columns exist in the 'productioncenter_productioncenter' table
+//         if (role === 'district_admin' && district_id) {
+//             query += ` WHERE pc.district_id = ?`;
+//             params.push(district_id);
+//         } else if (role === 'block_admin' && block_id) {
+//             query += ` WHERE pc.block_id = ?`;
+//             params.push(block_id);
+//         }
+//         // Note: Superadmin or Department Admin gets no filter (sees all)
+
+//         // 4. Group By is required for the SUM() function to work per center
+//         query += ` GROUP BY pc.id`;
+
+//         console.log("📝 SQL:", query);
+//         console.log("📦 Params:", params);
+
+//         // 5. Execute
+//         const [rows] = await db.query(query, params);
+
+//         console.log(`✅ Found ${rows.length} production centers.`);
+
+//         res.status(200).json({
+//             success: true,
+//             data: rows
+//         });
+
+//     } catch (err) {
+//         console.error("❌ Production Centers List Error:", err);
+//         res.status(500).json({ 
+//             success: false, 
+//             error: "Failed to fetch production centers",
+//             details: err.message 
+//         });
+//     }
+// };
 exports.getProductionCentersList = async (req, res) => {
     try {
         console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
-        
+
         // 1. Get user info for filtering
         const { role, district_id, block_id } = req.user;
         console.log("🔐 User Role:", role);
@@ -1424,35 +1488,37 @@ exports.getProductionCentersList = async (req, res) => {
         // We select center details and SUM the saplings_available from the stock table.
         // LEFT JOIN ensures we show centers even if they have 0 stock.
         let query = `
-  SELECT 
-    pc.id,
-    pc.name_of_production_centre,
-    pc.complete_address,
-    pc.status,
-    pc.district_id,
-    md.District_Name AS District_Name,
-    pc.production_type,
-    COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
-  FROM productioncenter_productioncenter pc
-  LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-  LEFT JOIN master_district md ON pc.district_id = md.id
-`;
+          SELECT
+              pc.id,
+              pc.name_of_production_centre,
+              pc.complete_address,
+              pc.status,
+              pc.district_id,
+              md.District_Name AS District_Name,
+              pc.production_type,
+              pc.latitude, -- Added latitude
+              pc.longitude, -- Added longitude
+              COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
+          FROM productioncenter_productioncenter pc
+          LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+          LEFT JOIN master_district md ON pc.district_id = md.id
+        `;
 
         const params = [];
 
         // 3. Apply Role-Based Filters
         // These columns exist in the 'productioncenter_productioncenter' table
         if (role === 'district_admin' && district_id) {
-            query += ` WHERE pc.district_id = ?`;
+            query += ` WHERE pc.district_id =?`;
             params.push(district_id);
         } else if (role === 'block_admin' && block_id) {
-            query += ` WHERE pc.block_id = ?`;
+            query += ` WHERE pc.block_id =?`;
             params.push(block_id);
         }
         // Note: Superadmin or Department Admin gets no filter (sees all)
 
         // 4. Group By is required for the SUM() function to work per center
-        query += ` GROUP BY pc.id`;
+        query += ` GROUP BY pc.id, pc.latitude, pc.longitude`; // Added latitude and longitude to GROUP BY
 
         console.log("📝 SQL:", query);
         console.log("📦 Params:", params);
@@ -1469,10 +1535,10 @@ exports.getProductionCentersList = async (req, res) => {
 
     } catch (err) {
         console.error("❌ Production Centers List Error:", err);
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             error: "Failed to fetch production centers",
-            details: err.message 
+            details: err.message
         });
     }
 };
