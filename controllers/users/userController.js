@@ -8,221 +8,384 @@ const redisClient = require('../../redisClient');
 const sendOtpSms = require('../../utils/sendSms');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const cache = new NodeCache({ stdTTL: 180 }); 
+const axios = require('axios');
 
+async function geocodeAddress(address) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`;
+    const response = await axios.get(url, { headers: { 'User-Agent': 'YourAppName/1.0' } });
+
+    if (response.data && response.data.length > 0) {
+      return {
+        latitude: parseFloat(response.data[0].lat),
+        longitude: parseFloat(response.data[0].lon)
+      };
+    }
+  } catch (err) {
+    console.error("Geocoding failed:", err);
+  }
+  // Fallback to null if geocoding fails
+  return { latitude: null, longitude: null };
+}
 // ===================== AUTH =====================
 
-// REGISTER (SEND OTP)
-exports.register = async (req, res) => {
-  try {
-    // 1. Destructure Email along with other fields
-    const { username, password, phone, role, email } = req.body;
+// // REGISTER (SEND OTP)
+// exports.register = async (req, res) => {
+//   try {
+//     // 1. Destructure Email along with other fields
+//     const { username, password, phone, role, email } = req.body;
     
-    // 2. Validate required fields
-    if (!phone || !password || !email) {
-      return res.status(400).json({ message: 'Phone, Password, and Email are required' });
-    }
+//     // 2. Validate required fields
+//     if (!phone || !password || !email) {
+//       return res.status(400).json({ message: 'Phone, Password, and Email are required' });
+//     }
 
-    // 3. Normalize & validate phone
+//     // 3. Normalize & validate phone
+//     const pn = parsePhoneNumberFromString(phone, 'IN');
+//     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+//     const e164 = pn.number; // e.g., +919789754800
+
+//     // 4. Check if user exists by Phone
+//     const [existingPhone] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
+//     if (existingPhone.length > 0) {
+//       return res.status(400).json({ message: 'User with this phone already exists.' });
+//     }
+
+//     // 5. Check if user exists by Email (New Check)
+//     const [existingEmail] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
+//     if (existingEmail.length > 0) {
+//       return res.status(400).json({ message: 'User with this email already exists.' });
+//     }
+
+//     // 6. Generate OTP and hashed password
+//     // const otp = Math.floor(100000 + Math.random() * 900000).toString();
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     // 7. Include Email in the pending object
+//     // const pending = { 
+//     //   username, 
+//     //   phone: e164, 
+//     //   email, // Added Email
+//     //   password: hashedPassword, 
+//     //   role_id: role, 
+//     //   otp 
+//     // };
+//     const insertQuery = `
+//       INSERT INTO users_customuser
+//         (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
+//       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+//     `;
+//     // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
+
+//     await db.query(insertQuery, [
+//       username,   // 1. ?
+//       phone,      // 2. ?
+//       email,      // 3. ?
+//       hashedPassword,   // 4. ?
+//       role,    // 5. ?
+//       true,                  // 6. ?
+//       false,                 // 7. ?
+//       null                   // 8. ? (This is for first_name)
+//                              // 9. CURRENT_TIMESTAMP is handled by SQL
+//     ]);
+//     // 8. Store in Redis with 10 min TTL
+//     // await redisClient.set(`register_${e164}`, JSON.stringify(pending), { EX: 600 });
+
+//     // 9. Send SMS (uncomment when ready)
+//     // await sendOtpSms(e164, otp);
+
+//     return res.status(200).json({ message: 'OTP sent to phone' });
+//   } catch (err) {
+//     console.error('Registration Error:', err);
+//     return res.status(500).json({ error: err.message });
+//   }
+// };
+
+// // VERIFY OTP
+// exports.verifyOtp = async (req, res) => {
+//   try {
+//     const { phone, otp } = req.body;
+//     if (!phone || !otp) return res.status(400).json({ message: 'Phone and OTP required' });
+
+//     // 1. Normalize Phone
+//     const pn = parsePhoneNumberFromString(phone, 'IN');
+//     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+//     const e164 = pn.number; 
+
+//     // 2. Get Cached Data from Redis
+//     const cachedDataString = await redisClient.get(`register_${e164}`);
+//     if (!cachedDataString) {
+//       return res.status(400).json({ message: 'OTP expired or invalid request. Please register again.' });
+//     }
+
+//     const cachedData = JSON.parse(cachedDataString);
+
+//     // 3. Verify OTP
+//     if (cachedData.otp !== otp) {
+//       return res.status(400).json({ message: 'Invalid OTP' });
+//     }
+
+//     // 4. Insert into Database
+//     // COLUMNS: username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined
+//     // COUNT: 9 Columns
+    
+//     const insertQuery = `
+//       INSERT INTO users_customuser
+//         (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
+//       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+//     `;
+//     // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
+
+//     await db.query(insertQuery, [
+//       cachedData.username,   // 1. ?
+//       cachedData.phone,      // 2. ?
+//       cachedData.email,      // 3. ?
+//       cachedData.password,   // 4. ?
+//       cachedData.role_id,    // 5. ?
+//       true,                  // 6. ?
+//       false,                 // 7. ?
+//       null                   // 8. ? (This is for first_name)
+//                              // 9. CURRENT_TIMESTAMP is handled by SQL
+//     ]);
+    
+//     // 5. Cleanup Redis
+//     await redisClient.del(`register_${e164}`);
+//     res.status(201).json({ message: "User registered successfully" });
+    
+//   } catch (err) {
+//     console.error("Verify OTP Error:", err);
+//     if (err.code === 'ER_DUP_ENTRY') {
+//       return res.status(400).json({ message: 'User already exists.' });
+//     }
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
+// exports.login = async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     // 1. Query with JOINs to get Role Name, Production Center ID, and Status
+//     // This query runs directly against the DB every time. No cache here.
+//    const query = `
+//       SELECT 
+//         u.id, 
+//         u.username, 
+//         u.password,
+//         u.role_id,
+//         r.name as role_name,
+//         pc.id as production_center_id,
+//         pc.status as production_center_status,
+//         u.department_id,
+//         u.district_id,
+//         u.block_id
+//       FROM users_customuser u
+//       LEFT JOIN users_role r ON u.role_id = r.id
+//       LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
+//       WHERE u.email = ?
+//     `;
+
+//     const [users] = await db.query(query, [email]);
+
+//     if (users.length === 0) {
+//       return res.status(404).json({ error: "User not found" });
+//     }
+
+//     const user = users[0];
+
+//     // 2. Compare Password
+//     const match = await bcrypt.compare(password, user.password);
+//     if (!match) {
+//       return res.status(400).json({ error: "Wrong password" });
+//     }
+
+//     // --- Define Secrets ---
+//     const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+//     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+//     const accessToken = jwt.sign(
+//       { 
+//         id: user.id, 
+//         role: user.role_name,
+//         department_id: user.department_id,
+//         district_id: user.district_id,
+//         block_id: user.block_id
+//       },
+//       JWT_SECRET,
+//       { expiresIn: '2h' }
+//     );
+
+//     const refreshToken = jwt.sign(
+//       { id: user.id },
+//       JWT_REFRESH_SECRET,
+//       { expiresIn: '7d' }
+//     );
+    
+//     // 5. Send Response (Added new fields here)
+//     res.json({
+//       access: accessToken,
+//       refresh: refreshToken,
+//       user_id: user.id,
+//       role: user.role_name,             
+//       user_name: user.username,
+//       production_center_id: user.production_center_id || null,
+//       production_center_status: user.production_center_status || null,
+//       // New fields added below:
+//       department_id: user.department_id || null,
+//       district_id: user.district_id || null,
+//       block_id: user.block_id || null
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
+
+// SEND LOGIN OTP
+exports.sendLoginOtp = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ message: 'Phone is required' });
+
     const pn = parsePhoneNumberFromString(phone, 'IN');
     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
-    const e164 = pn.number; // e.g., +919789754800
+    const e164 = pn.number;
 
-    // 4. Check if user exists by Phone
-    const [existingPhone] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
-    if (existingPhone.length > 0) {
-      return res.status(400).json({ message: 'User with this phone already exists.' });
-    }
+    // Check user exists by phone
+    const [rows] = await db.query('SELECT u.id, u.username, u.email, u.password, u.role_id, r.name as role_name, u.department_id, u.district_id, u.block_id, pc.id as production_center_id, pc.status as production_center_status FROM users_customuser u LEFT JOIN users_role r ON u.role_id = r.id LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id WHERE u.phone = ?', [e164]);
+    if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
 
-    // 5. Check if user exists by Email (New Check)
-    const [existingEmail] = await db.query('SELECT id FROM users_customuser WHERE email = ?', [email]);
-    if (existingEmail.length > 0) {
-      return res.status(400).json({ message: 'User with this email already exists.' });
-    }
+    const user = rows[0];
 
-    // 6. Generate OTP and hashed password
-    // const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Generate OTP and save to Redis
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit
+    const payload = {
+      user_id: user.id,
+      phone: e164,
+      otp,
+      username: user.username,
+      role_id: user.role_id,
+      role_name: user.role_name,
+      department_id: user.department_id,
+      district_id: user.district_id,
+      block_id: user.block_id,
+      production_center_id: user.production_center_id,
+      production_center_status: user.production_center_status
+    };
 
-    // 7. Include Email in the pending object
-    // const pending = { 
-    //   username, 
-    //   phone: e164, 
-    //   email, // Added Email
-    //   password: hashedPassword, 
-    //   role_id: role, 
-    //   otp 
-    // };
-    const insertQuery = `
-      INSERT INTO users_customuser
-        (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `;
-    // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
+    await redisClient.set(`login_${e164}`, JSON.stringify(payload), { EX: 600 }); // 10 minutes
 
-    await db.query(insertQuery, [
-      username,   // 1. ?
-      phone,      // 2. ?
-      email,      // 3. ?
-      hashedPassword,   // 4. ?
-      role,    // 5. ?
-      true,                  // 6. ?
-      false,                 // 7. ?
-      null                   // 8. ? (This is for first_name)
-                             // 9. CURRENT_TIMESTAMP is handled by SQL
-    ]);
-    // 8. Store in Redis with 10 min TTL
-    // await redisClient.set(`register_${e164}`, JSON.stringify(pending), { EX: 600 });
+    // Send SMS (ensure sendOtpSms available)
+    // try {
+    //   await sendOtpSms(e164, otp);
+    // } catch (smsErr) {
+    //   console.warn('SMS send failed, continuing in dev mode', smsErr);
+    //   // you may still return success but in prod handle errors properly
+    // }
 
-    // 9. Send SMS (uncomment when ready)
-    // await sendOtpSms(e164, otp);
-
-    return res.status(200).json({ message: 'OTP sent to phone' });
+    return res.status(200).json({ message: 'OTP sent to phone' , otp});
   } catch (err) {
-    console.error('Registration Error:', err);
+    console.error('sendLoginOtp Error:', err);
     return res.status(500).json({ error: err.message });
   }
 };
 
-// VERIFY OTP
-exports.verifyOtp = async (req, res) => {
+// VERIFY LOGIN OTP
+exports.verifyLoginOtp = async (req, res) => {
   try {
     const { phone, otp } = req.body;
     if (!phone || !otp) return res.status(400).json({ message: 'Phone and OTP required' });
 
-    // 1. Normalize Phone
     const pn = parsePhoneNumberFromString(phone, 'IN');
     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
-    const e164 = pn.number; 
+    const e164 = pn.number;
 
-    // 2. Get Cached Data from Redis
-    const cachedDataString = await redisClient.get(`register_${e164}`);
-    if (!cachedDataString) {
-      return res.status(400).json({ message: 'OTP expired or invalid request. Please register again.' });
+    // Fetch cached payload
+    const cached = await redisClient.get(`login_${e164}`);
+    if (!cached) return res.status(400).json({ message: 'OTP expired or invalid. Request a new OTP.' });
+
+    const data = JSON.parse(cached);
+    if (data.otp !== otp) return res.status(400).json({ message: 'Invalid OTP' });
+
+    // Option A: Use cached user info if present; otherwise fetch from DB for latest data
+    let user = null;
+    if (data.user_id && data.username) {
+      user = {
+        id: data.user_id,
+        username: data.username,
+        role_id: data.role_id,
+        role_name: data.role_name,
+        department_id: data.department_id,
+        district_id: data.district_id,
+        block_id: data.block_id,
+        production_center_id: data.production_center_id || null,
+        production_center_status: data.production_center_status || null
+      };
+    } else {
+      const [rows] = await db.query(`
+        SELECT 
+          u.id, u.username, u.role_id, r.name as role_name,
+          pc.id as production_center_id, pc.status as production_center_status,
+          u.department_id, u.district_id, u.block_id
+        FROM users_customuser u
+        LEFT JOIN users_role r ON u.role_id = r.id
+        LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
+        WHERE u.phone = ?
+      `, [e164]);
+
+      if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
+      const row = rows[0];
+      user = {
+        id: row.id,
+        username: row.username,
+        role_id: row.role_id,
+        role_name: row.role_name,
+        department_id: row.department_id,
+        district_id: row.district_id,
+        block_id: row.block_id,
+        production_center_id: row.production_center_id || null,
+        production_center_status: row.production_center_status || null
+      };
     }
 
-    const cachedData = JSON.parse(cachedDataString);
-
-    // 3. Verify OTP
-    if (cachedData.otp !== otp) {
-      return res.status(400).json({ message: 'Invalid OTP' });
-    }
-
-    // 4. Insert into Database
-    // COLUMNS: username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined
-    // COUNT: 9 Columns
-    
-    const insertQuery = `
-      INSERT INTO users_customuser
-        (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `;
-    // Note above: I added an extra '?' before CURRENT_TIMESTAMP to match the 'first_name' column.
-
-    await db.query(insertQuery, [
-      cachedData.username,   // 1. ?
-      cachedData.phone,      // 2. ?
-      cachedData.email,      // 3. ?
-      cachedData.password,   // 4. ?
-      cachedData.role_id,    // 5. ?
-      true,                  // 6. ?
-      false,                 // 7. ?
-      null                   // 8. ? (This is for first_name)
-                             // 9. CURRENT_TIMESTAMP is handled by SQL
-    ]);
-    
-    // 5. Cleanup Redis
-    await redisClient.del(`register_${e164}`);
-    res.status(201).json({ message: "User registered successfully" });
-    
-  } catch (err) {
-    console.error("Verify OTP Error:", err);
-    if (err.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ message: 'User already exists.' });
-    }
-    res.status(500).json({ error: err.message });
-  }
-};
-
-exports.login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // 1. Query with JOINs to get Role Name, Production Center ID, and Status
-    // This query runs directly against the DB every time. No cache here.
-   const query = `
-      SELECT 
-        u.id, 
-        u.username, 
-        u.password,
-        u.role_id,
-        r.name as role_name,
-        pc.id as production_center_id,
-        pc.status as production_center_status,
-        u.department_id,
-        u.district_id,
-        u.block_id
-      FROM users_customuser u
-      LEFT JOIN users_role r ON u.role_id = r.id
-      LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
-      WHERE u.email = ?
-    `;
-
-    const [users] = await db.query(query, [email]);
-
-    if (users.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const user = users[0];
-
-    // 2. Compare Password
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res.status(400).json({ error: "Wrong password" });
-    }
-
-    // --- Define Secrets ---
-    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+    // Issue JWTs
+   const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
 
-    const accessToken = jwt.sign(
-      { 
-        id: user.id, 
-        role: user.role_name,
-        department_id: user.department_id,
-        district_id: user.district_id,
-        block_id: user.block_id
-      },
-      JWT_SECRET,
-      { expiresIn: '2h' }
-    );
+    const accessToken = jwt.sign({
+      id: user.id,
+      role: user.role_name,
+      department_id: user.department_id,
+      district_id: user.district_id,
+      block_id: user.block_id
+    }, JWT_SECRET, { expiresIn: '2h' });
 
-    const refreshToken = jwt.sign(
-      { id: user.id },
-      JWT_REFRESH_SECRET,
-      { expiresIn: '7d' }
-    );
-    
-    // 5. Send Response (Added new fields here)
-    res.json({
+    const refreshToken = jwt.sign({ id: user.id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+    // Cleanup
+    await redisClient.del(`login_${e164}`);
+
+    return res.json({
       access: accessToken,
       refresh: refreshToken,
       user_id: user.id,
-      role: user.role_name,             
+      role: user.role_name,
       user_name: user.username,
-      production_center_id: user.production_center_id || null,
-      production_center_status: user.production_center_status || null,
-      // New fields added below:
+      production_center_id: user.production_center_id,
+      production_center_status: user.production_center_status,
       department_id: user.department_id || null,
       district_id: user.district_id || null,
       block_id: user.block_id || null
     });
-
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+    console.error('verifyLoginOtp Error:', err);
+    return res.status(500).json({ error: err.message });
   }
 };
+
+
 
 // REFRESH TOKEN (Placeholder)
 exports.refreshToken = async (req, res) => {
@@ -262,7 +425,6 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
-// 2. RESET PASSWORD (Verify OTP & Set New Password)
 exports.resetPassword = async (req, res) => {
   try {
     const { phone, otp, newPassword } = req.body;
@@ -546,30 +708,81 @@ exports.updateFarmer = async (req, res) => {
 
 // controllers/users/userController.js
 
+// ==========================================
+// 1. GET FARMER BY AADHAAR (EXISTING - KEEP AS IS)
+// ==========================================
 exports.getFarmerAadhar = async (req, res) => {
   try {
     const { aadhar_no } = req.query;
 
-    // 1. Check if aadhar_no is provided in query params
     if (aadhar_no) {
-      const [data] = await db.query(
-        `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
+      // 1. Check in FARMER table and get ALL values
+      const [farmerRows] = await db.query(
+        `SELECT id, farmer_id, farmer_name, father_name, mobile_number, 
+                social_status, gender, address, caste_category, dob, 
+                village_id,  district_id 
+         FROM farmer WHERE aadhaar = ?`,
         [aadhar_no]
       );
 
-      // If specific aadhar not found
-      if (!data.length) {
-        return res.status(404).json({ error: "Farmer not found with this Aadhar number" });
+      if (!farmerRows.length) {
+        // If not in farmer table, return 404 so frontend goes to Non-Farmer form
+        return res.status(404).json({ error: "Your credentials are not registered. Please complete the registration to proceed." });
       }
 
-      // Return the single farmer object
-      return res.json(data[0]);
+      const farmer = farmerRows[0];
+      const farmerPk = farmer.id; // Use the actual PK (integer) for lands
+      console.log(farmer.id , "farmer_id")
+      // 2. Fetch Land Details using the Farmer PK
+      const [landRows] = await db.query(
+        `SELECT * FROM farmer_land_details WHERE farmer_id = ?`,
+        [farmerPk]
+      );
+
+      // 3. Format Farmer Data
+      const formattedFarmer = {
+        farmerId: farmer.farmer_id || `FAR${farmerPk}`,
+        farmerName: farmer.farmer_name,
+        fatherName: farmer.father_name,
+        mobileNumber: farmer.mobile_number,
+        socialStatus: farmer.social_status,
+        gender: farmer.gender,
+        address: farmer.address,
+        caste_category: farmer.caste_category,
+        dob: farmer.dob,
+        village_name: farmer.village_id,
+        district_name: farmer.district_id
+      };
+
+      // 4. Format Land Data
+      const formattedLands = landRows.map(land => ({
+        landId: land.land_id,
+        lgdDistrictCode: land.lgd_district_code,
+        lgdSubDistrictCode: land.lgd_sub_district_code,
+        lgdVillageCode: land.lgd_village_code,
+        villageName: land.village_name,
+        surveyNo: land.survey_no,
+        subDivNo: land.sub_div_no,
+        area: land.area,
+        village_id: land.village_id,
+        District: String(land.district_id),
+        Block: String(land.block_id),
+        landType: land.land_type,
+        pattaNo: land.patta_no
+      }));
+
+      // 5. Return ONLY the data (No tokens)
+      return res.json({
+        status: "success",
+        data: {
+          farmer: formattedFarmer,
+          lands: formattedLands
+        },
+        message: "Requested Data Available"
+      });
     }
 
-    // 2. If no aadhar_no provided, return ALL farmers
-    const [allData] = await db.query(`SELECT * FROM users_farmeraathardetails`);
-    
-    return res.json(allData);
+  
 
   } catch (err) {
     console.error(err);
@@ -577,6 +790,455 @@ exports.getFarmerAadhar = async (req, res) => {
   }
 };
 
+
+// exports.getAadhar = async (req, res) => {
+//   try {
+//     const { aadhar_no } = req.query;
+
+//     if (aadhar_no) {
+//       const [aadhaarRows] = await db.query(
+//         `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
+//         [aadhar_no]
+//       );
+
+//       if (!aadhaarRows.length) {
+//         return res.status(404).json({ error: "Invalid credentials. Please register your Aadhaar to proceed." });
+//       }
+//       console.log(aadhaarRows[0] , "aadhaarRows")
+//       const { farmer_id , user_id ,district_id , block_id , farmer_name , department_id} = aadhaarRows[0];
+//       console.log(user_id , "farmer")
+//       // if (!farmer_id) {
+//       //   return res.status(404).json({ error: "Aadhaar found, but not linked to a farmer profile yet." });
+//       // }
+
+//       // const [farmerRows] = await db.query(
+//       //   `SELECT * FROM farmer WHERE id = ?`,
+//       //   [farmer_id]
+//       // );
+
+//       // const [landRows] = await db.query(
+//       //   `SELECT * FROM farmer_land_details WHERE farmer_id = ?`,
+//       //   [farmer_id]
+//       // );
+
+//       // if (!farmerRows.length) {
+//       //   return res.status(404).json({ error: "Farmer profile missing in farmer table." });
+//       // }
+
+//       // const farmer = farmerRows[0];
+
+//       // const formattedFarmer = {
+//       //   farmerId: farmer.farmer_id || `FAR${farmer.id}`,
+//       //   farmerName: farmer.farmer_name,
+//       //   fatherName: farmer.father_name,
+//       //   mobileNumber: farmer.mobile_number,
+//       //   socialStatus: farmer.social_status,
+//       //   gender: farmer.gender,
+//       //   address: farmer.address,
+//       //   caste_category: farmer.caste_category,
+//       //   dob: farmer.dob,
+//       //   village_name: farmer.village_name,
+//       //   taluk_name: farmer.taluk_name,
+//       //   district_name: farmer.district_name
+//       // };
+
+//       // const formattedLands = landRows.map(land => ({
+//       //   landId: land.land_id,
+//       //   lgdDistrictCode: land.lgd_district_code,
+//       //   lgdSubDistrictCode: land.lgd_sub_district_code,
+//       //   lgdVillageCode: land.lgd_village_code,
+//       //   villageName: land.village_name,
+//       //   surveyNo: land.survey_no,
+//       //   subDivNo: land.sub_div_no,
+//       //   area: land.area,
+//       //   village_id: land.village_id,
+//       //   District: String(land.district_id),
+//       //   Block: String(land.block_id),
+//       //   landType: land.land_type,
+//       //   pattaNo: land.patta_no
+//       // }));
+
+//       const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+//       const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+//       const accessToken = jwt.sign({
+//         id: user_id,
+//         role: 'farmer',
+//         district_id:district_id || null,
+//         block_id: block_id || null
+//       }, JWT_SECRET, { expiresIn: '2h' });
+
+//       const refreshToken = jwt.sign({ id: user_id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+//       return res.json({
+//         status: "success",
+//         // data: {
+//         //   farmer: formattedFarmer,
+//         //   lands: formattedLands
+//         // },
+//         message: "Requested Data Available",
+//         access: accessToken,
+//         refresh: refreshToken,
+//         user_id: user_id,
+//         role: 'farmer',
+//         user_name: farmer_name,
+//         production_center_id: null,
+//         production_center_status: null,
+//         department_id:department_id || null,
+//         district_id: district_id || null,
+//         block_id: block_id || null
+//       });
+//     }
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+// ==========================================
+// 2. CHECK AADHAAR FOR REGISTRATION
+// ==========================================
+
+
+exports.getAadhar = async (req, res) => {
+  try {
+    const { aadhar_no } = req.query;
+
+    if (!aadhar_no) {
+      return res.status(400).json({ error: "Aadhaar number is required." });
+    }
+
+    // Query the Aadhaar table
+    const [aadhaarRows] = await db.query(
+      `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
+      [aadhar_no]
+    );
+
+    if (!aadhaarRows.length) {
+      return res.status(404).json({
+        error: "Invalid credentials. Please register your Aadhaar to proceed."
+      });
+    }
+
+    const { farmer_id, user_id, district_id, block_id, farmer_name, department_id } = aadhaarRows[0];
+
+    // JWT secrets
+    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+    const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+    // Create tokens
+    const accessToken = jwt.sign(
+      {
+        id: user_id,
+        role: 'farmer',
+        district_id: district_id || null,
+        block_id: block_id || null,
+        department_id: department_id || null
+      },
+      JWT_SECRET,
+      { expiresIn: '2h' }
+    );
+
+    const refreshToken = jwt.sign(
+      { id: user_id },
+      JWT_REFRESH_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Send response exactly in the desired format
+    return res.json({
+      status: "success",
+      message: "Requested Data Available",
+      access: accessToken,
+      refresh: refreshToken,
+      user_id: user_id,
+      role: 'farmer',
+      user_name: farmer_name,
+      department_id: department_id || null,
+      district_id: district_id || null,
+      block_id: block_id || null,
+      production_center_id: null,
+      production_center_status: null
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+
+exports.checkAadharForRegistration = async (req, res) => {
+  try {
+    const { aadhar_no } = req.body;
+
+    if (!aadhar_no || aadhar_no.length !== 12) {
+      return res.status(400).json({ error: "Valid 12-digit Aadhaar required" });
+    }
+
+    // 1. Check if Aadhaar exists in farmer table
+    const [farmerRows] = await db.query(
+      `SELECT id, farmer_id, farmer_name, father_name, mobile_number, 
+              district_id, block_id, village_id, social_status, gender, 
+              address, caste_category, dob 
+       FROM farmer WHERE aadhaar = ?`,
+      [aadhar_no]
+    );
+
+    if (farmerRows.length === 0) {
+      return res.json({
+        status: "not_found",
+        message: "Aadhaar not found in farmer database. Please complete registration.",
+        isVerified: false
+      });
+    }
+
+    const farmer = farmerRows[0];
+
+    // 2. Check if already exists in users_farmeraathardetails
+    const [existingEntry] = await db.query(
+      `SELECT id, type, user_id FROM users_farmeraathardetails WHERE aadhar_no = ?`,
+      [aadhar_no]
+    );
+    if (existingEntry.length > 0) {
+      return res.json({
+        status: "already_registered",
+        message: "Aadhaar already registered. Please login with Aadhaar.",
+        isVerified: true
+      });
+    }
+
+    // 3. Check if mobile number is already in users_customuser
+    const [existingUser] = await db.query(
+      `SELECT id FROM users_customuser WHERE phone = ?`,
+      [farmer.mobile_number]
+    );
+    if (existingUser.length > 0) {
+      return res.status(400).json({
+        error: "Mobile number already linked to another account. Please contact support."
+      });
+    }
+
+    // 4. Create user in users_customuser
+    const dummyEmail = `farmer_${farmer.mobile_number}@temp.com`;
+    const [userResult] = await db.query(
+      `INSERT INTO users_customuser (phone, email, username, is_active, role_id) 
+       VALUES (?, ?, ?, 1, ?)`,
+      [farmer.mobile_number, dummyEmail, farmer.farmer_name, 4]
+    );
+    const newUserPk = userResult.insertId;
+
+    // 5. Fetch lat/lng from Photon API
+    let latitude = null;
+    let longitude = null;
+    try {
+      const geoRes = await axios.get('https://photon.komoot.io/api/', {
+        params: {
+          q: farmer.address,
+          limit: 1
+        },
+        headers: {
+          'User-Agent': 'YourAppName/1.0' // Photon requires a User-Agent
+        }
+      });
+
+      if (geoRes.data && geoRes.data.features && geoRes.data.features.length > 0) {
+        const coords = geoRes.data.features[0].geometry.coordinates;
+        longitude = coords[0]; // Photon gives [lon, lat]
+        latitude = coords[1];
+      }
+    } catch (geoErr) {
+      console.error("Geocoding failed", geoErr);
+    }
+
+    // 6. Insert into users_farmeraathardetails with lat/lng
+    await db.query(
+      `INSERT INTO users_farmeraathardetails 
+       (aadhar_no, address, farmer_name, mobile_number, district_id, block_id, village_id, type, user_id, latitude, longitude) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'farmer', ?, ?, ?)`,
+      [aadhar_no, farmer.address, farmer.farmer_name, farmer.mobile_number, farmer.district_id, farmer.block_id, farmer.village_id, newUserPk, latitude, longitude]
+    );
+
+    // 7. Generate JWT tokens
+    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+    const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+    const accessToken = jwt.sign({
+      id: newUserPk,
+      role: 'farmer',
+      district_id: farmer.district_id || null,
+      block_id: farmer.block_id || null
+    }, JWT_SECRET, { expiresIn: '2h' });
+
+    const refreshToken = jwt.sign({ id: newUserPk }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+    // 8. Send response
+    return res.json({
+      status: "linked_and_logged_in",
+      message: "Aadhaar verified and linked successfully!",
+      isVerified: true,
+      access: accessToken,
+      refresh: refreshToken,
+      user_id: newUserPk,
+      role: 'farmer',
+      user_name: farmer.farmer_name,
+      farmer_id: farmer.farmer_id || `FAR${farmer.id}`,
+      production_center_id: null,
+      production_center_status: null,
+      department_id: null,
+      district_id: farmer.district_id || null,
+      block_id: farmer.block_id || null,
+      latitude,
+      longitude
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+// ==========================================
+// 3. REGISTER NON-FARMER (UPDATED WITH LAT/LNG)
+// ==========================================
+
+
+exports.registerNonFarmer = async (req, res) => {
+  try {
+    const {
+      aadhar_no,
+      farmer_name,
+      mobile_number,
+      address,
+      purpose,
+      district_id
+    } = req.body;
+
+    // Validate required fields
+    if (!aadhar_no || !farmer_name || !mobile_number || !district_id) {
+      return res.status(400).json({ error: "Name, Mobile, Aadhaar, and District are required" });
+    }
+
+    if (aadhar_no.length !== 12) {
+      return res.status(400).json({ error: "Invalid Aadhaar number" });
+    }
+
+    if (mobile_number.length !== 10) {
+      return res.status(400).json({ error: "Invalid mobile number" });
+    }
+
+    // Check if Aadhaar already exists in farmer table
+    const [existingFarmer] = await db.query(
+      `SELECT id FROM farmer WHERE aadhaar = ?`,
+      [aadhar_no]
+    );
+    if (existingFarmer.length > 0) {
+      return res.status(400).json({ error: "Aadhaar already exists in farmer database. Please use login." });
+    }
+
+    // Check if phone number already exists in users_customuser
+    const [existingUser] = await db.query(
+      `SELECT id FROM users_customuser WHERE phone = ?`,
+      [mobile_number]
+    );
+    if (existingUser.length > 0) {
+      return res.status(400).json({ error: "Mobile number already registered." });
+    }
+
+    // Generate non_farmer_id (NFAR + next ID)
+    const [maxId] = await db.query(`SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM users_farmeraathardetails`);
+    const newNonFarmerId = `NFAR${maxId[0].next_id}`;
+
+    const dummyEmail = `nonfarmer_${mobile_number}@temp.com`;
+
+    const [userResult] = await db.query(
+      `INSERT INTO users_customuser 
+       (phone, email, username, is_active, role_id) 
+       VALUES (?, ?, ?, 1, ?)`,
+      [mobile_number, dummyEmail, farmer_name, 4]
+    );
+    const newUserPk = userResult.insertId;
+
+    // -----------------------------
+    // Geocode address using Photon
+    // -----------------------------
+    let latitude = null;
+    let longitude = null;
+
+    if (address) {
+      try {
+        const geoRes = await axios.get('https://photon.komoot.io/api/', {
+          params: { q: address, limit: 1 },
+          headers: { 'User-Agent': 'YourAppName/1.0' } // required by Photon
+        });
+
+        if (geoRes.data && geoRes.data.features && geoRes.data.features.length > 0) {
+          const coords = geoRes.data.features[0].geometry.coordinates;
+          longitude = coords[0]; // Photon returns [lon, lat]
+          latitude = coords[1];
+        }
+      } catch (geoErr) {
+        console.error("Geocoding failed:", geoErr.message);
+      }
+    }
+
+    // 2. Insert into users_farmeraathardetails table
+    await db.query(
+      `INSERT INTO users_farmeraathardetails 
+       (aadhar_no, non_farmer_id, farmer_name, purpose, mobile_number, district_id, address, latitude, longitude, type, user_id) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'non-farmer', ?)`,
+      [
+        aadhar_no, 
+        newNonFarmerId, 
+        farmer_name, 
+        purpose, 
+        mobile_number, 
+        district_id, 
+        address, 
+        latitude, 
+        longitude, 
+        newUserPk
+      ]
+    );
+
+    // Generate JWT tokens
+    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+    const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+    const accessToken = jwt.sign({
+      id: newUserPk,
+      role: 'farmer',
+      district_id: district_id || null,
+      block_id: null
+    }, JWT_SECRET, { expiresIn: '2h' });
+
+    const refreshToken = jwt.sign({ id: newUserPk }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+    return res.status(201).json({
+      status: "success",
+      message: "Registration successful!",
+      access: accessToken,
+      refresh: refreshToken,
+      user_id: newUserPk,           
+      role: 'farmer',
+      user_name: farmer_name,
+      farmer_id: newNonFarmerId,    
+      production_center_id: null,
+      production_center_status: null,
+      department_id: null,
+      district_id: district_id || null,
+      block_id: null,
+      latitude,
+      longitude
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
 
 // ===================== FARMER REQUEST =====================
 exports.farmerRequest = async (req, res) => {
@@ -649,6 +1311,9 @@ exports.farmerRequest = async (req, res) => {
         connection.release();
     }
 };
+
+
+
 exports.approveItem = async (req, res) => {
   const connection = await db.getConnection();
   try {

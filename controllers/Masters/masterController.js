@@ -5,11 +5,11 @@ exports.getBlocks = async (req, res) => {
   try {
     const { district_id } = req.query;
 
-    let query = `SELECT id, Block_Name, district_id FROM master_block`;
+    let query = `SELECT id, Block_Name, Dist_Name FROM master_block`;
     let params = [];
 
     if (district_id) {
-      query += ` WHERE district_id = ?`;
+      query += ` WHERE Dist_Name = ?`;
       params.push(district_id);
     }
 
@@ -28,11 +28,11 @@ exports.getVillages = async (req, res) => {
   try {
     const { block_id } = req.query;
 
-    let query = `SELECT id, Village_Name, block_id FROM master_village`;
+    let query = `SELECT id, Village_Name, Block FROM master_village`;
     let params = [];
 
     if (block_id) {
-      query += ` WHERE block_id = ?`;
+      query += ` WHERE Block = ?`;
       params.push(block_id);
     }
 

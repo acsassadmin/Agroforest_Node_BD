@@ -34,12 +34,12 @@ router.put('/distribution-centers/', authenticateToken, distController.updateDis
 router.delete('/distribution-centers/', authenticateToken, distController.deleteDistributionCenter);
 
 // Stock Details
-router.get('/stock-details/', authenticateToken, stockController.getStockDetails);
+router.get('/stock-details/',  stockController.getStockDetails);
 router.post('/stock-details/', authenticateToken,stockController.uploadMiddleware, stockController.createStockDetail);
 router.put('/stock-details/', authenticateToken, stockController.updateStockDetail);
 router.delete('/stock-details/', authenticateToken, stockController.deleteStockDetail);
 
-router.get('/trees', authenticateToken, stockController.getSpecies);
+router.get('/trees', stockController.getSpecies);
 
 // Targets
 router.get('/targets/', authenticateToken, stockController.getTargets);
