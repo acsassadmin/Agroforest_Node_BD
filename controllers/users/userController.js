@@ -1474,9 +1474,10 @@ exports.getCenterOrders = async (req, res) => {
             SELECT 
                 fr.id as request_id,
                 fr.orderid,
+                fr.production_center_id,
                 fr.status as order_status,
                 fr.created_at as order_date,
-                f.name as farmer_name,
+                f.farmer_name as farmer_name,
                 f.mobile_number as farmer_mobile,
                 f.farmer_id as farmer_code,
                 fri.id as item_id,
@@ -1511,6 +1512,7 @@ exports.getCenterOrders = async (req, res) => {
                     order_date: row.order_date,
                     farmer_name: row.farmer_name,
                     farmer_mobile: row.farmer_mobile,
+                    production_center_id: row.production_center_id,
                     farmer_code: row.farmer_code,
                     requested_items: []
                 });
@@ -1525,7 +1527,8 @@ exports.getCenterOrders = async (req, res) => {
                     species_name_tamil: row.species_name_tamil,
                     requested_quantity: row.requested_quantity,
                     approved_quantity: row.approved_quantity,
-                    item_status: row.item_status
+                    item_status: row.item_status,
+
                 });
             }
         });
