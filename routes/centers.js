@@ -21,11 +21,12 @@ router.delete('/production-centers/', authenticateToken, prodController.deletePr
 router.get('/production-centers-nearby/', authenticateToken, prodController.getNearbyProductionCenters);
 
 //report
-router.get('/district-summary/', authenticateToken, prodController.getDistrictSummary);
-router.get('/districts/summary/', authenticateToken, prodController.getSingleDistrictSummary);
-
+router.get('/district-summary/',  prodController.getDistrictSummary);
 router.get('/blocksummary/', prodController.getBlockSummary);
 router.get('/productioncenter-summary', prodController.getProductionCenterSummary);
+router.get('/district-sapling-summary/',  prodController.getDistrictSaplingSummary);
+router.get('/block-sapling-summary/', prodController.getBlockSaplingSummary);
+router.get('/productioncenter-sapling-summary/', prodController.getProductionCenterSaplingSummary);
 
 // ----Distribution Centers-------
 router.get('/distribution-centers/', authenticateToken, distController.getDistributionCenters);
