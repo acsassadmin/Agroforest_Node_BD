@@ -461,90 +461,95 @@ exports.deleteProductionCenter = async (req, res) => {
 
 
 exports.getNearbyProductionCenters = async (req, res) => {
-    try {
-        const { farmer_id } = req.query;
+  try {
+    const { farmer_id } = req.query;
 
-        if (!farmer_id) {
-            return res.status(400).json({ error: "Farmer ID is required" });
-        }
-
-        // 1. Get Farmer Details (Location + Preferred Species)
-        const [farmers] = await db.query(
-            `SELECT village_id, block_id, district_id, species_preferred 
-             FROM users_farmeraathardetails 
-             WHERE farmer_id = ?`, 
-            [farmer_id]
-        );
-
-        if (farmers.length === 0) {
-            return res.status(404).json({ error: "Farmer not found" });
-        }
-
-        const farmer = farmers[0];
-        const { village_id, block_id, district_id, species_preferred } = farmer;
-
-        // 2. Parse Species Preferred (JSON string -> Array)
-        let preferredSpeciesIds = [];
-        try {
-            if (species_preferred) {
-                preferredSpeciesIds = JSON.parse(species_preferred);
-            }
-        } catch (e) {
-            console.error("Error parsing species_preferred JSON", e);
-        }
-
-        // If no species preferred, return empty result immediately
-        if (preferredSpeciesIds.length === 0) {
-            return res.json({ count: 0, results: [] });
-        }
-
-        // 3. Construct Main Query
-        // LOGIC CHANGE:
-        // - JOIN with 'productioncenter_stockdetails' -> This filters OUT centers that don't have the species.
-        // - Use 'DISTINCT' -> To prevent duplicate rows if a center has multiple matching species.
-        // - Proximity Score -> Used for sorting the filtered results.
-        
-        const query = `
-            SELECT DISTINCT
-                pc.*, 
-                d.District_Name as district_name,
-                b.Block_Name as block_name,
-                v.Village_Name as village_name,
-                -- Calculate Location Proximity Score
-                CASE 
-                    WHEN pc.village_id = ? THEN 3 
-                    WHEN pc.block_id = ? THEN 2 
-                    WHEN pc.district_id = ? THEN 1 
-                    ELSE 0 
-                END as proximity_score
-            FROM productioncenter_productioncenter pc
-            JOIN productioncenter_stockdetails sd ON pc.id = sd.production_center_id
-            LEFT JOIN master_district d ON pc.district_id = d.id
-            LEFT JOIN master_block b ON pc.block_id = b.id
-            LEFT JOIN master_village v ON pc.village_id = v.id
-            WHERE pc.status = 'approved' 
-              AND sd.species_id IN (?) -- ✅ Filter by preferred species IDs
-            ORDER BY proximity_score DESC, pc.id DESC
-        `;
-
-        const params = [
-            village_id,
-            block_id,
-            district_id,
-            preferredSpeciesIds // Pass the array of species IDs [15, 17, 18]
-        ];
-
-        const [centers] = await db.query(query, params);
-
-        res.json({ 
-            count: centers.length, 
-            results: centers 
-        });
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
+    if (!farmer_id) {
+      return res.status(400).json({ error: "Farmer ID is required" });
     }
+
+    const [farmers] = await db.query(
+      `SELECT latitude, longitude FROM users_farmeraathardetails WHERE user_id = ?`,
+      [farmer_id]
+    );
+
+    if (farmers.length === 0) {
+      return res.status(404).json({ error: "Farmer not found" });
+    }
+
+    const { latitude: farmerLat, longitude: farmerLng } = farmers[0];
+
+    if (farmerLat == null || farmerLng == null) {
+      return res.status(400).json({ error: "Farmer location not available" });
+    }
+
+    const query = `
+      SELECT 
+        pc.*,
+        d.District_Name AS district_name,
+        b.Block_Name AS block_name,
+        v.Village_Name AS village_name,
+        s.name AS species_name,
+        s.name_tamil AS species_name_tamil,
+        ps.saplings_available,
+        ps.sapling_age,
+        (6371 * acos(
+          LEAST(1, cos(radians(?)) * cos(radians(pc.latitude)) *
+          cos(radians(pc.longitude) - radians(?)) +
+          sin(radians(?)) * sin(radians(pc.latitude)))
+        )) AS distance_km
+      FROM productioncenter_productioncenter pc
+      LEFT JOIN master_district d ON pc.district_id = d.id
+      LEFT JOIN master_block b ON pc.block_id = b.id
+      LEFT JOIN master_village v ON pc.village_id = v.id
+      LEFT JOIN productioncenter_stockdetails ps ON ps.production_center_id = pc.id
+      LEFT JOIN tbl_agroforest_trees s ON s.id = ps.species_id
+      WHERE pc.status = 'approved'
+        AND pc.latitude IS NOT NULL
+        AND pc.longitude IS NOT NULL
+      ORDER BY distance_km ASC, pc.id ASC
+    `;
+
+    const params = [farmerLat, farmerLng, farmerLat];
+    const [centers] = await db.query(query, params);
+
+    const productionCentersMap = {};
+
+    centers.forEach(row => {
+      if (!productionCentersMap[row.id]) {
+        productionCentersMap[row.id] = {
+          ...row,
+          stock: []
+        };
+      }
+
+      if (row.species_name) {
+        productionCentersMap[row.id].stock.push({
+          species_name: row.species_name,
+          species_name_tamil: row.species_name_tamil,
+          saplings_available: row.saplings_available,
+          sapling_age: row.sapling_age
+        });
+      }
+    });
+
+    // ✅ Force sort after grouping — 0 km first → largest last
+    const result = Object.values(productionCentersMap).sort((a, b) => {
+      const distA = parseFloat(a.distance_km) || 99999;
+      const distB = parseFloat(b.distance_km) || 99999;
+      if (distA !== distB) return distA - distB;
+      return a.id - b.id;
+    });
+
+    return res.json({
+      count: result.length,
+      results: result
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 
