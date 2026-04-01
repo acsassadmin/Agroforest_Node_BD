@@ -6,11 +6,11 @@ const authenticateToken = require('../middleware/authMiddleware'); // Import Mid
 // ======================================================================
 
 // --- Public Routes (No Authentication Required) ---
-router.post('/register/', userController.register);
-router.post('/verify-otp/', userController.verifyOtp);
-router.post('/login/', userController.login);
-router.post('/reset-password/', userController.resetPassword);
-router.post('/forgot-password/', userController.forgotPassword);
+// router.post('/register/', userController.register);
+router.post('/login/', userController.sendLoginOtp);
+router.post('/verify-otp/', userController.verifyLoginOtp);
+// router.post('/reset-password/', userController.resetPassword);
+// router.post('/forgot-password/', userController.forgotPassword);
 router.post('/refresh/', userController.refreshToken);
 router.get('/roles/', userController.getRoles); 
 
@@ -18,7 +18,13 @@ router.get('/roles/', userController.getRoles);
 router.post('/farmer-request/', authenticateToken, userController.farmerRequest);
 router.put('/approve-item/:id', authenticateToken, userController.approveItem);
 router.post('/farmer-aadhar/', authenticateToken, userController.createFarmer);
-router.get('/farmer-aadhar/', authenticateToken, userController.getFarmerAadhar);
+router.get('/farmer-aadhar/', userController.getFarmerAadhar);
+router.get('/get-aadhar/', userController.getAadhar);
+
+
+// Farmer Registration Flow
+router.post('/farmer/check-aadhar/', userController.checkAadharForRegistration);
+router.post('/farmer/register-non-farmer/', userController.registerNonFarmer);
 router.get('/farmer-request/', authenticateToken, userController.getCenterOrders);
 router.put('/farmer-aadhar/:id', userController.updateFarmer);
 
