@@ -7,28 +7,58 @@ const formatToDate = (dateStr) => {
 };
 
 // ===================== CREATE TARGET DISTRICT =====================
+// ===================== CREATE TARGET DISTRICT =====================
 exports.createTargetDistrict = async (req, res) => {
     try {
         const { target_department_id, district_id, target_quantity, start_date, end_date, status, created_by, scheme_type, scheme_id } = req.body;
+        
         if (!district_id || target_quantity === undefined || !start_date || !end_date || !created_by) {
             return res.status(400).json({ message: "all fields are required" });
         }
         if (scheme_type === "Scheme" && !scheme_id) {
             return res.status(400).json({ message: "Scheme ID is required when Scheme type is selected" });
         }
+        
         const finalStartDate = formatToDate(start_date);
         const finalEndDate = formatToDate(end_date);
         
-        const [existing] = await db.query(
-            `SELECT * FROM target_district WHERE target_department_id = ? AND district_id = ? AND ((? BETWEEN start_date AND end_date) OR (? BETWEEN start_date AND end_date))`,
-            [target_department_id, district_id, finalStartDate, finalEndDate]
-        );
-        if (existing.length > 0) return res.status(400).json({ message: "Target already exists in this date range" });
+        // ✅ UPDATED: Added scheme_type and scheme_id to the duplicate check
+        let checkQuery = `
+            SELECT * FROM target_district 
+            WHERE target_department_id = ? 
+              AND district_id = ? 
+              AND scheme_type = ? 
+              AND ((? BETWEEN start_date AND end_date) OR (? BETWEEN start_date AND end_date))
+        `;
+        
+        let checkParams = [
+            target_department_id, 
+            district_id, 
+            scheme_type || "Non-Scheme", 
+            finalStartDate, 
+            finalEndDate
+        ];
+
+        // If it's a Scheme, strictly match the scheme_id
+        if (scheme_type === "Scheme") {
+            checkQuery += ` AND scheme_id = ?`;
+            checkParams.push(scheme_id);
+        } else {
+            // If it's Non-Scheme, strictly match where scheme_id is NULL
+            checkQuery += ` AND scheme_id IS NULL`;
+        }
+
+        const [existing] = await db.query(checkQuery, checkParams);
+        
+        if (existing.length > 0) {
+            return res.status(400).json({ message: "Target already exists in this date range for this scheme/type" });
+        }
         
         const [result] = await db.query(
             `INSERT INTO target_district (target_department_id, district_id, target_quantity, start_date, end_date, status, created_by, scheme_type, scheme_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [target_department_id, district_id, target_quantity, finalStartDate, finalEndDate, status || 'Active', created_by, scheme_type || "Non-Scheme", scheme_id || null]
         );
+        
         res.status(201).json({ message: "Target District created successfully", target_id: result.insertId });
     } catch (err) {
         console.error("Create Error:", err);
@@ -42,8 +72,10 @@ exports.getAllTargetDistricts = async (req, res) => {
     try {
         let userId = req.user?.id;
         let uDeptId = null;
+        let uDistId = null;
+        let isSuperUser = false;
 
-        // 1. Extract User ID from Token
+        // 1. Extract User ID from Token (Fallback)
         if (!userId) {
             try {
                 const authHeader = req.headers.authorization;
@@ -55,58 +87,39 @@ exports.getAllTargetDistricts = async (req, res) => {
             } catch (e) { /* ignore */ }
         }
 
-        // 2. Take the login ID and get department_id from users_customuser table
+        // 2. Fetch User Role, Department, and District
         if (userId) {
-            try {
-                const [userRow] = await db.query(`SELECT department_id FROM users_customuser WHERE id = ?`, [userId]);
-                if (userRow.length > 0) {
-                    uDeptId = userRow[0].department_id;
-                }
-            } catch (dbErr) {
-                console.error("DB Fetch Error:", dbErr.message);
+            const [userRow] = await db.query(
+                `SELECT department_id, district_id, is_superuser FROM users_customuser WHERE id = ?`, 
+                [userId]
+            );
+            if (userRow.length > 0) {
+                uDeptId = userRow[0].department_id;
+                uDistId = userRow[0].district_id; // ✅ New: Capture district_id
+                isSuperUser = userRow[0].is_superuser;
             }
         }
 
-        let department_name = "Unknown Department";
+        let department_name = "Unknown";
         let department_total_target = 0;
 
-        // 3. Using that department_id, get the department name from department table
+        // 3. Fetch Department Details (Only if user belongs to a department)
         if (uDeptId) {
-            try {
-                const [deptRow] = await db.query(`SELECT * FROM department WHERE id = ?`, [uDeptId]);
-                
-                if (deptRow.length > 0) {
-                    const d = deptRow[0];
-                    // Try common column names for the department string
-                    department_name = d.department_name || d.name || d.dept_name || d.Department_Name || d.title || "";
-                    
-                    // ULTRA-SAFE FALLBACK: Find the first string column that isn't an ID
-                    if (!department_name) {
-                        for (const key in d) {
-                            if (typeof d[key] === 'string' && d[key].trim() !== '' && !key.toLowerCase().includes('id')) {
-                                department_name = d[key];
-                                break;
-                            }
-                        }
-                    }
-                    if (!department_name) department_name = "Unknown Department";
-                }
-
-                // Also fetch the total target limit for the remaining limit math
-                const [deptTarget] = await db.query(`SELECT target_quantity FROM target_department WHERE department_id = ?`, [uDeptId]);
-if (deptTarget.length > 0) {
-    department_total_target = Number(deptTarget[0].target_quantity) || 0;
-}   
-            } catch (nameErr) {
-                console.error("Error fetching dept details:", nameErr.message);
+            const [deptRow] = await db.query(`SELECT * FROM department WHERE id = ?`, [uDeptId]);
+            if (deptRow.length > 0) {
+                department_name = deptRow[0].department_name || deptRow[0].Department_Name || "Unknown Department";
+            }
+            const [deptTarget] = await db.query(`SELECT target_quantity FROM target_department WHERE department_id = ?`, [uDeptId]);
+            if (deptTarget.length > 0) {
+                department_total_target = Number(deptTarget[0].target_quantity) || 0;
             }
         }
 
-        const { target_department_id } = req.query;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
+        // Base Query
         let countQuery = `SELECT COUNT(*) as total FROM target_district td`;
         let dataQuery = `
             SELECT td.id, td.target_department_id, td.target_quantity, td.start_date, td.end_date, 
@@ -120,20 +133,30 @@ if (deptTarget.length > 0) {
 
         const params = [];
         const countParams = [];
+        let whereClauses = [];
 
-        // 4. Filter data strictly by the logged-in user's department
-        if (uDeptId) {
-            dataQuery += " WHERE td.target_department_id = ?";
-            countQuery += " WHERE td.target_department_id = ?";
+        // ✅ 4. LOGIC: Filter by District OR Department
+        // If user has a district_id (District Admin), show ONLY that district
+        if (uDistId) {
+            whereClauses.push("td.district_id = ?");
+            params.push(uDistId);
+            countParams.push(uDistId);
+        } 
+        // If not a district admin but has a department_id, filter by department
+        else if (uDeptId) {
+            whereClauses.push("td.target_department_id = ?");
             params.push(uDeptId);
             countParams.push(uDeptId);
-        } else if (target_department_id) {
-            dataQuery += " WHERE td.target_department_id = ?";
-            countQuery += " WHERE td.target_department_id = ?";
-            params.push(target_department_id);
-            countParams.push(target_department_id);
         }
 
+        // Apply WHERE clauses to queries
+        if (whereClauses.length > 0) {
+            const whereStr = " WHERE " + whereClauses.join(" AND ");
+            dataQuery += whereStr;
+            countQuery += whereStr;
+        }
+
+        // 5. Pagination and Execution
         const [countRows] = await db.query(countQuery, countParams);
         const total = countRows[0].total;
 
@@ -142,15 +165,13 @@ if (deptTarget.length > 0) {
 
         const [rows] = await db.query(dataQuery, params);
 
-        // 5. Send exact payload frontend expects
-        const responsePayload = {
+        res.status(200).json({
             data: rows,
             pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
             user_department_name: department_name,
-            department_total_target: department_total_target
-        };
-
-        res.status(200).json(responsePayload);
+            department_total_target: department_total_target,
+            user_district_id: uDistId // ✅ Help frontend know user is a Dist Admin
+        });
     } catch (err) {
         console.error("Get All Error:", err);
         res.status(500).json({ error: err.message });
