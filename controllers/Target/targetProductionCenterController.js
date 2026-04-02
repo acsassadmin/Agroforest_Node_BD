@@ -55,58 +55,98 @@ exports.createTargetProductionCenter = async (req, res) => {
 };
 
 // ===================== GET ALL =====================
-// ===================== UPDATED GET ALL QUERY =====================
+// ===================== GET ALL =====================
 exports.getAllTargetProductionCenters = async (req, res) => {
     try {
-        // ... (Keep your Token and User ID extraction logic the same) ...
+        // 1. DEFINE VARIABLES AT THE TOP LEVEL OF THE FUNCTION
+        let uBlockId = null;
+        let uDistId = null;
+        let userId = null;
 
+        // 2. Extract User ID from Token
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.split(' ')[1];
+            const decoded = jwt.decode(token); 
+            userId = decoded?.id || decoded?.userId;
+        }
+
+        // 3. Fetch user permissions if userId exists
+        if (userId) {
+            const [userRow] = await db.query(
+                `SELECT district_id, block_id FROM users_customuser WHERE id = ?`, 
+                [userId]
+            );
+            if (userRow.length > 0) {
+                uDistId = userRow[0].district_id;
+                uBlockId = userRow[0].block_id;
+            }
+        }
+
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        // 4. Build Conditions Array
         let conditions = [];
         let params = [];
 
-        // 1. Check Role-based filtering
-        // If the logged-in user has a block_id, we MUST filter by it
         if (uBlockId) {
             conditions.push("tpc.block_id = ?");
             params.push(uBlockId);
         } else if (uDistId) {
-            // If they are a District Admin, show everything in their district
             conditions.push("tpc.district_id = ?");
             params.push(uDistId);
         }
 
-        // 2. Build the WHERE clause
         let whereClause = conditions.length > 0 ? " WHERE " + conditions.join(" AND ") : "";
 
-        // 3. Use a CLEAN count query
+        // 5. Get Total Count
         const [countRows] = await db.query(
             `SELECT COUNT(*) as total FROM target_productioncenter tpc ${whereClause}`, 
             params
         );
-        const total = countRows[0].total;
+        const total = countRows[0]?.total || 0;
 
-        // 4. Main Data Query with LEFT JOINs
-        // IMPORTANT: Ensure "tpc.scheme_id = s.id" is a LEFT JOIN so Non-Scheme data shows up!
+        // 6. Main Data Query (Use LEFT JOINs so Non-Scheme data shows up)
         let dataQuery = `
-            SELECT 
-                tpc.*, 
-                md.District_Name AS district_name, 
-                blk.Block_Name AS block_name,
-                pc.name_of_production_centre AS productioncenter_name,
-                s.name AS scheme_name
-            FROM target_productioncenter tpc
-            LEFT JOIN master_district md ON tpc.district_id = md.id
-            LEFT JOIN master_block blk ON tpc.block_id = blk.id
-            LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
-            LEFT JOIN tn_schema s ON tpc.scheme_id = s.id
-            ${whereClause}
-            ORDER BY tpc.id DESC 
-            LIMIT ? OFFSET ?
-        `;
+    SELECT 
+        tpc.*, 
+        md.District_Name AS district_name, 
+        blk.Block_Name AS block_name,
+        pc.name_of_production_centre AS productioncenter_name,
+        s.name AS scheme_name
+    FROM target_productioncenter tpc
+    LEFT JOIN master_district md ON tpc.district_id = md.id
+    LEFT JOIN master_block blk ON tpc.block_id = blk.id
+    LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
+    LEFT JOIN tn_schema s ON tpc.scheme_id = s.id
+    ${whereClause}
+    ORDER BY tpc.id DESC 
+    LIMIT ? OFFSET ?
+`;
 
         const finalParams = [...params, limit, offset];
         const [rows] = await db.query(dataQuery, finalParams);
 
-        // ... (Keep your responsePayload logic the same) ...
+        // 7. Prepare Response
+        const responsePayload = {
+            data: rows,
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
+        };
+
+        // 8. Add District/Block Names for Frontend Headers
+        if (uDistId || uBlockId) {
+            const [names] = await db.query(
+                `SELECT 
+                    (SELECT District_Name FROM master_district WHERE id = ?) as dName,
+                    (SELECT Block_Name FROM master_block WHERE id = ?) as bName`,
+                [uDistId, uBlockId]
+            );
+            responsePayload.user_district_name = names[0]?.dName || "Unknown District";
+            responsePayload.user_block_name = names[0]?.bName || "Unknown Block";
+        }
+
         res.status(200).json(responsePayload);
 
     } catch (err) {
