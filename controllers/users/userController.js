@@ -243,6 +243,7 @@ async function geocodeAddress(address) {
 // };
 
 
+
 // SEND LOGIN OTP
 exports.sendLoginOtp = async (req, res) => {
   try {
@@ -251,19 +252,32 @@ exports.sendLoginOtp = async (req, res) => {
 
     const pn = parsePhoneNumberFromString(phone, 'IN');
     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
-    const e164 = pn.number;
+
+    // Use local number (digits only) to match DB and Redis
+    const localNumber = pn.nationalNumber;
 
     // Check user exists by phone
-    const [rows] = await db.query('SELECT u.id, u.username, u.email, u.password, u.role_id, r.name as role_name, u.department_id, u.district_id, u.block_id, pc.id as production_center_id, pc.status as production_center_status FROM users_customuser u LEFT JOIN users_role r ON u.role_id = r.id LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id WHERE u.phone = ?', [e164]);
+    const [rows] = await db.query(
+      `SELECT u.id, u.username, u.email, u.password, u.role_id, 
+              r.name as role_name, u.department_id, u.district_id, u.block_id, 
+              pc.id as production_center_id, pc.status as production_center_status
+       FROM users_customuser u
+       LEFT JOIN users_role r ON u.role_id = r.id
+       LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
+       WHERE u.phone = ?`,
+      [localNumber]
+    );
+
     if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
 
     const user = rows[0];
 
-    // Generate OTP and save to Redis
+    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit
+
     const payload = {
       user_id: user.id,
-      phone: e164,
+      phone: localNumber,
       otp,
       username: user.username,
       role_id: user.role_id,
@@ -275,17 +289,10 @@ exports.sendLoginOtp = async (req, res) => {
       production_center_status: user.production_center_status
     };
 
-    await redisClient.set(`login_${e164}`, JSON.stringify(payload), { EX: 600 }); // 10 minutes
+    // Store OTP payload in Redis (10 min)
+    await redisClient.set(`login_${localNumber}`, JSON.stringify(payload), { EX: 600 });
 
-    // Send SMS (ensure sendOtpSms available)
-    // try {
-    //   await sendOtpSms(e164, otp);
-    // } catch (smsErr) {
-    //   console.warn('SMS send failed, continuing in dev mode', smsErr);
-    //   // you may still return success but in prod handle errors properly
-    // }
-
-    return res.status(200).json({ message: 'OTP sent to phone' , otp});
+    return res.status(200).json({ message: 'OTP sent to phone', otp });
   } catch (err) {
     console.error('sendLoginOtp Error:', err);
     return res.status(500).json({ error: err.message });
@@ -300,59 +307,35 @@ exports.verifyLoginOtp = async (req, res) => {
 
     const pn = parsePhoneNumberFromString(phone, 'IN');
     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
-    const e164 = pn.number;
 
-    // Fetch cached payload
-    const cached = await redisClient.get(`login_${e164}`);
+    // Use the same local number for Redis key
+    const localNumber = pn.nationalNumber;
+
+    // Fetch cached payload from Redis
+    const cached = await redisClient.get(`login_${localNumber}`);
     if (!cached) return res.status(400).json({ message: 'OTP expired or invalid. Request a new OTP.' });
 
     const data = JSON.parse(cached);
     if (data.otp !== otp) return res.status(400).json({ message: 'Invalid OTP' });
 
-    // Option A: Use cached user info if present; otherwise fetch from DB for latest data
-    let user = null;
-    if (data.user_id && data.username) {
-      user = {
-        id: data.user_id,
-        username: data.username,
-        role_id: data.role_id,
-        role_name: data.role_name,
-        department_id: data.department_id,
-        district_id: data.district_id,
-        block_id: data.block_id,
-        production_center_id: data.production_center_id || null,
-        production_center_status: data.production_center_status || null
-      };
-    } else {
-      const [rows] = await db.query(`
-        SELECT 
-          u.id, u.username, u.role_id, r.name as role_name,
-          pc.id as production_center_id, pc.status as production_center_status,
-          u.department_id, u.district_id, u.block_id
-        FROM users_customuser u
-        LEFT JOIN users_role r ON u.role_id = r.id
-        LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
-        WHERE u.phone = ?
-      `, [e164]);
-
-      if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
-      const row = rows[0];
-      user = {
-        id: row.id,
-        username: row.username,
-        role_id: row.role_id,
-        role_name: row.role_name,
-        department_id: row.department_id,
-        district_id: row.district_id,
-        block_id: row.block_id,
-        production_center_id: row.production_center_id || null,
-        production_center_status: row.production_center_status || null
-      };
-    }
+    // Use cached user info
+    const user = {
+      id: data.user_id,
+      username: data.username,
+      role_id: data.role_id,
+      role_name: data.role_name,
+      department_id: data.department_id,
+      district_id: data.district_id,
+      block_id: data.block_id,
+      production_center_id: data.production_center_id || null,
+      production_center_status: data.production_center_status || null
+    };
 
     // Issue JWTs
+ // Issue JWTs
    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
-    const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
 
     const accessToken = jwt.sign({
       id: user.id,
@@ -364,8 +347,8 @@ exports.verifyLoginOtp = async (req, res) => {
 
     const refreshToken = jwt.sign({ id: user.id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
 
-    // Cleanup
-    await redisClient.del(`login_${e164}`);
+    // Delete OTP from Redis
+    await redisClient.del(`login_${localNumber}`);
 
     return res.json({
       access: accessToken,
@@ -379,12 +362,12 @@ exports.verifyLoginOtp = async (req, res) => {
       district_id: user.district_id || null,
       block_id: user.block_id || null
     });
+
   } catch (err) {
     console.error('verifyLoginOtp Error:', err);
     return res.status(500).json({ error: err.message });
   }
 };
-
 
 
 // REFRESH TOKEN (Placeholder)
@@ -2090,10 +2073,74 @@ exports.getWeeklyFarmerRequestReport = async (req, res) => {
     }
 };
 
+// exports.getProductionCentersList = async (req, res) => {
+//     try {
+//         console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
+        
+//         // 1. Get user info for filtering
+//         const { role, district_id, block_id } = req.user;
+//         console.log("🔐 User Role:", role);
+
+//         // 2. Construct Query
+//         // We select center details and SUM the saplings_available from the stock table.
+//         // LEFT JOIN ensures we show centers even if they have 0 stock.
+//         let query = `
+//   SELECT 
+//     pc.id,
+//     pc.name_of_production_centre,
+//     pc.complete_address,
+//     pc.status,
+//     pc.district_id,
+//     md.District_Name AS District_Name,
+//     pc.production_type,
+//     COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
+//   FROM productioncenter_productioncenter pc
+//   LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+//   LEFT JOIN master_district md ON pc.district_id = md.id
+// `;
+
+//         const params = [];
+
+//         // 3. Apply Role-Based Filters
+//         // These columns exist in the 'productioncenter_productioncenter' table
+//         if (role === 'district_admin' && district_id) {
+//             query += ` WHERE pc.district_id = ?`;
+//             params.push(district_id);
+//         } else if (role === 'block_admin' && block_id) {
+//             query += ` WHERE pc.block_id = ?`;
+//             params.push(block_id);
+//         }
+//         // Note: Superadmin or Department Admin gets no filter (sees all)
+
+//         // 4. Group By is required for the SUM() function to work per center
+//         query += ` GROUP BY pc.id`;
+
+//         console.log("📝 SQL:", query);
+//         console.log("📦 Params:", params);
+
+//         // 5. Execute
+//         const [rows] = await db.query(query, params);
+
+//         console.log(`✅ Found ${rows.length} production centers.`);
+
+//         res.status(200).json({
+//             success: true,
+//             data: rows
+//         });
+
+//     } catch (err) {
+//         console.error("❌ Production Centers List Error:", err);
+//         res.status(500).json({ 
+//             success: false, 
+//             error: "Failed to fetch production centers",
+//             details: err.message 
+//         });
+//     }
+// };
 exports.getProductionCentersList = async (req, res) => {
     try {
         console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
-        
+
         // 1. Get user info for filtering
         const { role, district_id, block_id } = req.user;
         console.log("🔐 User Role:", role);
@@ -2102,35 +2149,37 @@ exports.getProductionCentersList = async (req, res) => {
         // We select center details and SUM the saplings_available from the stock table.
         // LEFT JOIN ensures we show centers even if they have 0 stock.
         let query = `
-  SELECT 
-    pc.id,
-    pc.name_of_production_centre,
-    pc.complete_address,
-    pc.status,
-    pc.district_id,
-    md.District_Name AS District_Name,
-    pc.production_type,
-    COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
-  FROM productioncenter_productioncenter pc
-  LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
-  LEFT JOIN master_district md ON pc.district_id = md.id
-`;
+          SELECT
+              pc.id,
+              pc.name_of_production_centre,
+              pc.complete_address,
+              pc.status,
+              pc.district_id,
+              md.District_Name AS District_Name,
+              pc.production_type,
+              pc.latitude, -- Added latitude
+              pc.longitude, -- Added longitude
+              COALESCE(SUM(ps.saplings_available), 0) as total_stock_count
+          FROM productioncenter_productioncenter pc
+          LEFT JOIN productioncenter_stockdetails ps ON pc.id = ps.production_center_id
+          LEFT JOIN master_district md ON pc.district_id = md.id
+        `;
 
         const params = [];
 
         // 3. Apply Role-Based Filters
         // These columns exist in the 'productioncenter_productioncenter' table
         if (role === 'district_admin' && district_id) {
-            query += ` WHERE pc.district_id = ?`;
+            query += ` WHERE pc.district_id =?`;
             params.push(district_id);
         } else if (role === 'block_admin' && block_id) {
-            query += ` WHERE pc.block_id = ?`;
+            query += ` WHERE pc.block_id =?`;
             params.push(block_id);
         }
         // Note: Superadmin or Department Admin gets no filter (sees all)
 
         // 4. Group By is required for the SUM() function to work per center
-        query += ` GROUP BY pc.id`;
+        query += ` GROUP BY pc.id, pc.latitude, pc.longitude`; // Added latitude and longitude to GROUP BY
 
         console.log("📝 SQL:", query);
         console.log("📦 Params:", params);
@@ -2147,10 +2196,10 @@ exports.getProductionCentersList = async (req, res) => {
 
     } catch (err) {
         console.error("❌ Production Centers List Error:", err);
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             error: "Failed to fetch production centers",
-            details: err.message 
+            details: err.message
         });
     }
 };
