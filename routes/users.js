@@ -49,5 +49,5 @@ router.get('/production-monthly-sales/', authenticateToken, userController.getMo
 
 
 router.post('/register-production-center/', userController.createProductionCenter);
-
+router.get('/generate-bill-pdf/', userController.generateBillPdf);
 module.exports = router;

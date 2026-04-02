@@ -318,7 +318,7 @@ exports.createProductionCenter = async (req, res) => {
             (production_type, status, name_of_production_centre,
              complete_address, district_id, block_id, village_id, contact_person, mobile_number,
              latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , area , created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+            VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
                 body.production_type || 'government',
                 body.name_of_production_centre,
@@ -332,9 +332,9 @@ exports.createProductionCenter = async (req, res) => {
                 body.longitude,
                 body.nursery_capacity,
                 body.certification_details,
-                body.nursery_category ,
-                body.department_id ,
-                body.area_acres ,
+                body.nursery_category,
+                body.department_id,
+                body.area_acres,
                 userId
             ]
         );

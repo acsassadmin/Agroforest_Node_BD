@@ -5,7 +5,7 @@ const NodeCache = require("node-cache");
 
 const sendOtpEmail = require('../../utils/mailer');
 const redisClient = require('../../redisClient');
-const sendOtpSms = require('../../utils/sendSms');
+const { sendOtpSms } = require('../../utils/sendSms');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const cache = new NodeCache({ stdTTL: 180 }); 
 const axios = require('axios');
@@ -243,20 +243,41 @@ async function geocodeAddress(address) {
 // };
 
 
+// ==========================================
+// HELPER FUNCTION: FORMAT INDIAN PHONE
+// ==========================================
+// Call this whenever you receive a phone number from frontend
+const formatIndianPhone = (phone) => {
+  if (!phone) return null;
+  // Remove all non-digits
+  let digits = phone.replace(/\D/g, '');
+  
+  // If user sent 12 digits starting with 91 (e.g., 919876543210)
+  if (digits.startsWith('91') && digits.length === 12) {
+    digits = digits.substring(2);
+  }
+  
+  // Validate exactly 10 digits
+  if (digits.length !== 10) return null;
+  
+  // Return standard format to save in DB
+  return `+91${digits}`;
+};
 
+
+// ==========================================
 // SEND LOGIN OTP
+// ==========================================
 exports.sendLoginOtp = async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ message: 'Phone is required' });
 
-    const pn = parsePhoneNumberFromString(phone, 'IN');
-    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    // Standardize the phone number
+    const formattedPhone = formatIndianPhone(phone);
+    if (!formattedPhone) return res.status(400).json({ message: 'Invalid phone number' });
 
-    // Use local number (digits only) to match DB and Redis
-    const localNumber = pn.nationalNumber;
-
-    // Check user exists by phone
+    // Check user exists by phone using the formatted string (+91XXXXXXXXXX)
     const [rows] = await db.query(
       `SELECT u.id, u.username, u.email, u.password, u.role_id, 
               r.name as role_name, u.department_id, u.district_id, u.block_id, 
@@ -265,7 +286,7 @@ exports.sendLoginOtp = async (req, res) => {
        LEFT JOIN users_role r ON u.role_id = r.id
        LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
        WHERE u.phone = ?`,
-      [localNumber]
+      [formattedPhone]
     );
 
     if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
@@ -273,11 +294,11 @@ exports.sendLoginOtp = async (req, res) => {
     const user = rows[0];
 
     // Generate OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     const payload = {
       user_id: user.id,
-      phone: localNumber,
+      phone: formattedPhone, // Save formatted (+91XXXXXXXXXX)
       otp,
       username: user.username,
       role_id: user.role_id,
@@ -289,8 +310,11 @@ exports.sendLoginOtp = async (req, res) => {
       production_center_status: user.production_center_status
     };
 
-    // Store OTP payload in Redis (10 min)
-    await redisClient.set(`login_${localNumber}`, JSON.stringify(payload), { EX: 600 });
+    // Store OTP payload in Redis (10 min) using formatted phone as key
+    await redisClient.set(`login_${formattedPhone}`, JSON.stringify(payload), { EX: 600 });
+
+    // Send SMS to formatted phone
+    await sendOtpSms(formattedPhone, otp);
 
     return res.status(200).json({ message: 'OTP sent to phone', otp });
   } catch (err) {
@@ -299,20 +323,21 @@ exports.sendLoginOtp = async (req, res) => {
   }
 };
 
+
+// ==========================================
 // VERIFY LOGIN OTP
+// ==========================================
 exports.verifyLoginOtp = async (req, res) => {
   try {
     const { phone, otp } = req.body;
     if (!phone || !otp) return res.status(400).json({ message: 'Phone and OTP required' });
 
-    const pn = parsePhoneNumberFromString(phone, 'IN');
-    if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
+    // Standardize the phone number
+    const formattedPhone = formatIndianPhone(phone);
+    if (!formattedPhone) return res.status(400).json({ message: 'Invalid phone number' });
 
-    // Use the same local number for Redis key
-    const localNumber = pn.nationalNumber;
-
-    // Fetch cached payload from Redis
-    const cached = await redisClient.get(`login_${localNumber}`);
+    // Fetch cached payload from Redis using formatted phone
+    const cached = await redisClient.get(`login_${formattedPhone}`);
     if (!cached) return res.status(400).json({ message: 'OTP expired or invalid. Request a new OTP.' });
 
     const data = JSON.parse(cached);
@@ -332,23 +357,18 @@ exports.verifyLoginOtp = async (req, res) => {
     };
 
     // Issue JWTs
- // Issue JWTs
-   const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
-const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
-
+    const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+    const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
 
     const accessToken = jwt.sign({
-      id: user.id,
-      role: user.role_name,
-      department_id: user.department_id,
-      district_id: user.district_id,
-      block_id: user.block_id
+      id: user.id, role: user.role_name, department_id: user.department_id,
+      district_id: user.district_id, block_id: user.block_id
     }, JWT_SECRET, { expiresIn: '2h' });
 
     const refreshToken = jwt.sign({ id: user.id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
 
     // Delete OTP from Redis
-    await redisClient.del(`login_${localNumber}`);
+    await redisClient.del(`login_${formattedPhone}`);
 
     return res.json({
       access: accessToken,
@@ -356,6 +376,7 @@ const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yf
       user_id: user.id,
       role: user.role_name,
       user_name: user.username,
+      phone: formattedPhone, // Return +91XXXXXXXXXX to frontend
       production_center_id: user.production_center_id,
       production_center_status: user.production_center_status,
       department_id: user.department_id || null,
@@ -1108,9 +1129,7 @@ exports.registerNonFarmer = async (req, res) => {
       return res.status(400).json({ error: "Invalid Aadhaar number" });
     }
 
-    if (mobile_number.length !== 10) {
-      return res.status(400).json({ error: "Invalid mobile number" });
-    }
+    
 
     // Check if Aadhaar already exists in farmer table
     const [existingFarmer] = await db.query(
@@ -1458,6 +1477,8 @@ exports.getCenterOrders = async (req, res) => {
                 fr.id as request_id,
                 fr.orderid,
                 fr.production_center_id,
+                fr.type,
+                fr.scheme_id,
                 fr.status as order_status,
                 fr.created_at as order_date,
                 f.farmer_name as farmer_name,
@@ -1473,7 +1494,7 @@ exports.getCenterOrders = async (req, res) => {
                 t.name_tamil as species_name_tamil
             FROM users_farmerrequest fr
             JOIN users_farmerrequestitem fri ON fr.id = fri.request_id
-            LEFT JOIN users_farmeraathardetails f ON fr.farmer_id = f.farmer_id
+            LEFT JOIN users_farmeraathardetails f ON fr.farmer_id = f.user_id
             LEFT JOIN tbl_agroforest_trees t ON fri.species_id = t.id
             ${whereClause}
             ORDER BY fr.created_at DESC
@@ -1496,6 +1517,8 @@ exports.getCenterOrders = async (req, res) => {
                     farmer_name: row.farmer_name,
                     farmer_mobile: row.farmer_mobile,
                     production_center_id: row.production_center_id,
+                    type : row.type,
+                    scheme_id: row.scheme_id,
                     farmer_code: row.farmer_code,
                     requested_items: []
                 });
@@ -2610,9 +2633,7 @@ exports.createProductionCenter = async (req, res) => {
     if (!name || !mobile || !email) {
       return res.status(400).json({ error: "All fields are required." });
     }
-    if (!/^\d{10}$/.test(mobile)) {
-      return res.status(400).json({ error: "Mobile must be exactly 10 digits." });
-    }
+    
 
     const insertQuery = `
       INSERT INTO users_customuser 
@@ -2642,3 +2663,210 @@ exports.createProductionCenter = async (req, res) => {
   }
 };
 
+
+const PDFDocument = require('pdfkit');
+const path = require('path');
+
+exports.generateBillPdf = async (req, res) => {
+  try {
+    const { order_id } = req.query;
+    if (!order_id) return res.status(400).json({ error: "order_id is required" });
+
+    // ---------------------------------------------------------
+    // 1. FETCH ORDER HEADER & PRODUCTION CENTER DETAILS
+    // ---------------------------------------------------------
+    const [orderRows] = await db.query(`
+      SELECT ur.*, pc.name_of_production_centre AS pc_name, pc.production_type, pc.complete_address AS pc_address
+      FROM users_farmerrequest ur
+      JOIN productioncenter_productioncenter pc ON ur.production_center_id = pc.id
+      WHERE ur.id = ?
+    `, [order_id]);
+
+    if (orderRows.length === 0) return res.status(404).json({ error: "Order not found" });
+    const order = orderRows[0];
+
+    // ---------------------------------------------------------
+    // 2. FETCH FARMER DETAILS
+    // ---------------------------------------------------------
+    const [farmerRows] = await db.query(`
+      SELECT farmer_id, name AS farmer_name, mobile_number, address 
+      FROM users_farmeraathardetails 
+      WHERE farmer_id = ?
+    `, [order.farmer_id]);
+    const farmer = farmerRows[0] || {};
+
+    // ---------------------------------------------------------
+    // 3. FETCH ORDER ITEMS (Joined with Stock to get Price)
+    // ---------------------------------------------------------
+    // IMPORTANT: Change 'stock_stock' to your actual stock table name if different
+    const [itemRows] = await db.query(`
+      SELECT fri.requested_quantity, fri.approved_quantity, fri.final_quantity,
+             s.local_name AS species_name, st.price_per_sapling
+      FROM users_farmerrequestitem fri
+      JOIN stock_stock st ON fri.stock_id = st.id
+      JOIN species_species s ON fri.species_id = s.id
+      WHERE fri.request_id = ?
+    `, [order_id]);
+
+    // ---------------------------------------------------------
+    // 4. GENERATE PDF
+    // ---------------------------------------------------------
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    
+    // Set response headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename=Bill_${order.orderid || order_id}.pdf`);
+    
+    // Pipe PDF directly to response
+    doc.pipe(res);
+
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+    // --- A. BACKGROUND COLOR (Light Green) ---
+    doc.rect(0, 0, doc.page.width, doc.page.height).fill('#e8f5e9');
+
+    // --- B. WATERMARK LOGO (If Government) ---
+    if (order.production_type === 'government') {
+      // Make sure you have a logo file in your backend directory (e.g., public/TN.png)
+      const logoPath = path.join(__dirname, '../public/TN.png'); 
+      try {
+        doc.image(logoPath, doc.page.margins.left + 50, 150, {
+          width: 400,
+          height: 400,
+          opacity: 0.08 // Mild opacity
+        });
+      } catch (err) {
+        console.log("Watermark logo not found, skipping.");
+      }
+    }
+
+    // --- C. HEADER ---
+    doc.fillColor('#1b5e20').fontSize(22).font('Helvetica-Bold')
+       .text(order.pc_name || "Production Center", { align: 'center' });
+    
+    doc.fontSize(10).font('Helvetica').fillColor('#333')
+       .text(order.pc_address || "", { align: 'center' });
+    
+    doc.moveDown(0.5);
+    doc.fontSize(14).font('Helvetica-Bold').fillColor('#000')
+       .text("TAX INVOICE / BILL", { align: 'center' });
+    
+    // Divider line
+    doc.moveTo(50, doc.y + 5).lineTo(50 + pageWidth, doc.y + 5).strokeColor('#1b5e20').lineWidth(2).stroke();
+    doc.moveDown(1);
+
+    // --- D. FARMER & ORDER DETAILS (Side by Side) ---
+    const detailY = doc.y;
+    const colWidth = pageWidth / 2;
+
+    // Left Column: Farmer Details
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#1b5e20').text("Farmer Details", 50, detailY);
+    doc.font('Helvetica').fillColor('#000');
+    doc.text(`Name: ${farmer.farmer_name || 'N/A'}`, 50, doc.y + 5);
+    doc.text(`ID: ${farmer.farmer_id || 'N/A'}`, 50, doc.y);
+    doc.text(`Mobile: ${farmer.mobile_number || 'N/A'}`, 50, doc.y);
+    doc.text(`Address: ${farmer.address || 'N/A'}`, 50, doc.y);
+
+    // Right Column: Order Details
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#1b5e20').text("Order Details", 50 + colWidth, detailY);
+    doc.font('Helvetica').fillColor('#000');
+    doc.text(`Order ID: ${order.orderid || order_id}`, 50 + colWidth, doc.y + 5);
+    doc.text(`Date: ${new Date(order.created_at).toLocaleDateString('en-IN')}`, 50 + colWidth, doc.y);
+    doc.text(`Type: ${order.type.toUpperCase()}`, 50 + colWidth, doc.y);
+    doc.text(`Payment: ${order.payment_type}`, 50 + colWidth, doc.y);
+    
+    doc.moveDown(2);
+
+    // --- E. SAPLINGS TABLE ---
+    const tableTop = doc.y;
+    const tableHeaders = ['Species', 'Req Qty', 'Appr Qty', 'Price/Unit', 'Total'];
+    const columnWidths = [150, 70, 70, 90, 90]; // Must sum to pageWidth (approx 470)
+
+    // Draw Table Header
+    doc.rect(50, tableTop, pageWidth, 20).fill('#2e7d32');
+    let currentX = 50;
+    tableHeaders.forEach((header, i) => {
+      doc.fillColor('#fff').fontSize(9).font('Helvetica-Bold')
+         .text(header, currentX + 5, tableTop + 5, { width: columnWidths[i] - 10, align: 'center' });
+      currentX += columnWidths[i];
+    });
+
+    // Draw Table Rows
+    let currentY = tableTop + 20;
+    itemRows.forEach((item, index) => {
+      const rowHeight = 22;
+      const bgColor = index % 2 === 0 ? '#ffffff' : '#f9f9f9';
+      
+      doc.rect(50, currentY, pageWidth, rowHeight).fill(bgColor);
+      doc.strokeColor('#ccc').lineWidth(0.5).rect(50, currentY, pageWidth, rowHeight).stroke();
+
+      const price = parseFloat(item.price_per_sapling) || 0;
+      const total = price * (item.final_quantity || item.approved_quantity || 0);
+
+      const rowData = [
+        item.species_name || 'Unknown',
+        item.requested_quantity,
+        item.approved_quantity,
+        `₹${price.toFixed(2)}`,
+        `₹${total.toFixed(2)}`
+      ];
+
+      currentX = 50;
+      rowData.forEach((cell, i) => {
+        doc.fillColor('#000').fontSize(9).font('Helvetica')
+           .text(String(cell), currentX + 5, currentY + 6, { width: columnWidths[i] - 10, align: 'center' });
+        currentX += columnWidths[i];
+      });
+      currentY += rowHeight;
+    });
+
+    // --- F. TOTALS SECTION ---
+    doc.moveDown(2);
+    const totalsY = Math.max(doc.y, currentY + 10);
+    const totalsX = 50 + (pageWidth / 2); // Push totals to the right side
+
+    const subtotal = parseFloat(order.total_amount) || 0;
+    const grandTotal = parseFloat(order.scheme_total_amount) || subtotal;
+    const discount = subtotal - grandTotal;
+
+    // Subtotal
+    doc.fontSize(10).font('Helvetica').fillColor('#000')
+       .text("Subtotal:", totalsX, totalsY, { width: 150, align: 'right' });
+    doc.text(`₹${subtotal.toFixed(2)}`, totalsX + 160, totalsY, { continued: false });
+
+    // Discount (Only if Scheme)
+    if (order.type === 'scheme' && discount > 0) {
+      doc.fillColor('#d32f2f').font('Helvetica-Bold')
+         .text(`Scheme Discount:`, totalsX, doc.y + 5, { width: 150, align: 'right' })
+         .text(`- ₹${discount.toFixed(2)}`, totalsX + 160, doc.y, { continued: false });
+    }
+
+    // Grand Total Line
+    doc.moveDown(0.5);
+    doc.moveTo(totalsX, doc.y).lineTo(totalsX + 310, doc.y).strokeColor('#1b5e20').lineWidth(1).stroke();
+    doc.moveDown(0.5);
+
+    // Grand Total Text
+    doc.fontSize(14).font('Helvetica-Bold').fillColor('#1b5e20')
+       .text("GRAND TOTAL:", totalsX, doc.y, { width: 150, align: 'right' });
+    doc.fontSize(14)
+       .text(`₹${grandTotal.toFixed(2)}`, totalsX + 160, doc.y - 16, { continued: false });
+
+    // --- G. FOOTER ---
+    doc.moveDown(4);
+    doc.fontSize(8).font('Helvetica').fillColor('#555')
+       .text("This is a computer-generated bill.", 50, doc.y, { align: 'center' });
+
+    // Finalize PDF
+    doc.end();
+
+  } catch (err) {
+    console.error("PDF Generation Error:", err);
+    // If headers are already sent, we can't send JSON, so just end the response
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to generate PDF", details: err.message });
+    } else {
+      res.end();
+    }
+  }
+};
