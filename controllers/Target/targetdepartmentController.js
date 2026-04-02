@@ -222,6 +222,7 @@ exports.getAllTargetDepartments = async (req, res) => {
             `SELECT 
                 td.id AS target_id, 
                 td.department_id, 
+                
                 d.name AS department_name, 
                 td.target_quantity, 
                 td.start_date, 
