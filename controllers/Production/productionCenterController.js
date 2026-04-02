@@ -289,7 +289,6 @@ exports.getProductionCenters = async (req, res) => {
         }
 
         const formatted = formatCenterData(centers, certs);
-
         res.json({
             total: totalCount,
             page,
@@ -303,6 +302,7 @@ exports.getProductionCenters = async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 };
+
 exports.createProductionCenter = async (req, res) => {
     const connection = await db.getConnection();
     try {

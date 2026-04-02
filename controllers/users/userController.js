@@ -713,7 +713,7 @@ exports.updateFarmer = async (req, res) => {
 // ==========================================
 exports.getFarmerAadhar = async (req, res) => {
   try {
-    const { aadhar_no } = req.query;
+    const { aadhar_no } = req.body;
 
     if (aadhar_no) {
       // 1. Check in FARMER table and get ALL values
@@ -902,7 +902,7 @@ exports.getFarmerAadhar = async (req, res) => {
 
 exports.getAadhar = async (req, res) => {
   try {
-    const { aadhar_no } = req.query;
+    const { aadhar_no } = req.body;
 
     if (!aadhar_no) {
       return res.status(400).json({ error: "Aadhaar number is required." });
@@ -2553,5 +2553,43 @@ exports.getMonthlyTotalSales = async (req, res) => {
 };
 
 
+exports.createProductionCenter = async (req, res) => {
+  try {
+    const { name, mobile, email } = req.body;
 
+    // 1. Basic Validation
+    if (!name || !mobile || !email) {
+      return res.status(400).json({ error: "All fields are required." });
+    }
+    if (!/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({ error: "Mobile must be exactly 10 digits." });
+    }
+
+    const insertQuery = `
+      INSERT INTO users_customuser 
+      (username, phone, email, role_id, date_joined) 
+      VALUES (?, ?, ?, ?, NOW())
+    `;
+
+    await db.query(insertQuery, [
+      name,
+      mobile,
+      email,
+      2  
+    ]);
+
+    res.status(201).json({ 
+      message: "Registration successful! Please login with OTP." 
+    });
+
+  } catch (err) {
+    console.error("PC Registration Error:", err);
+    
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'This mobile number or email is already registered.' });
+    }
+    
+    res.status(500).json({ error: err.message });
+  }
+};
 
