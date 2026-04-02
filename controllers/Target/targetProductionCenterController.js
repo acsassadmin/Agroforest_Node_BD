@@ -55,99 +55,95 @@ exports.createTargetProductionCenter = async (req, res) => {
 };
 
 // ===================== GET ALL =====================
-// ===================== GET ALL =====================
 exports.getAllTargetProductionCenters = async (req, res) => {
     try {
-        // 1. DEFINE VARIABLES AT THE TOP LEVEL OF THE FUNCTION
-        let uBlockId = null;
-        let uDistId = null;
-        let userId = null;
+        const userId = req.user.id;
 
-        // 2. Extract User ID from Token
-        const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            const decoded = jwt.decode(token); 
-            userId = decoded?.id || decoded?.userId;
-        }
+        // 1. Fetch User Info to determine permissions
+        const [userRow] = await db.query(
+            `SELECT u.district_id, u.block_id, d.District_Name, b.Block_Name, u.is_superuser 
+             FROM users_customuser u 
+             LEFT JOIN master_district d ON u.district_id = d.id 
+             LEFT JOIN master_block b ON u.block_id = b.id
+             WHERE u.id = ?`, 
+            [userId]
+        );
+        
+        if (userRow.length === 0) return res.status(404).json({ message: "User not found" });
+        
+        const { district_id, block_id, District_Name, Block_Name, is_superuser } = userRow[0];
 
-        // 3. Fetch user permissions if userId exists
-        if (userId) {
-            const [userRow] = await db.query(
-                `SELECT district_id, block_id FROM users_customuser WHERE id = ?`, 
-                [userId]
-            );
-            if (userRow.length > 0) {
-                uDistId = userRow[0].district_id;
-                uBlockId = userRow[0].block_id;
-            }
-        }
-
+        // 2. Setup Pagination
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
-        // 4. Build Conditions Array
+        // 3. Build Filter (Superusers see EVERYTHING, others see their own Block/District)
         let conditions = [];
         let params = [];
 
-        if (uBlockId) {
-            conditions.push("tpc.block_id = ?");
-            params.push(uBlockId);
-        } else if (uDistId) {
-            conditions.push("tpc.district_id = ?");
-            params.push(uDistId);
+        if (!is_superuser) {
+            if (block_id) {
+                conditions.push("tpc.block_id = ?");
+                params.push(block_id);
+            } else if (district_id) {
+                conditions.push("tpc.district_id = ?");
+                params.push(district_id);
+            }
         }
 
         let whereClause = conditions.length > 0 ? " WHERE " + conditions.join(" AND ") : "";
 
-        // 5. Get Total Count
-        const [countRows] = await db.query(
-            `SELECT COUNT(*) as total FROM target_productioncenter tpc ${whereClause}`, 
-            params
-        );
-        const total = countRows[0]?.total || 0;
-
-        // 6. Main Data Query (Use LEFT JOINs so Non-Scheme data shows up)
+        // 4. Main Query (Note the LEFT JOIN on productioncenter_productioncenter)
         let dataQuery = `
-    SELECT 
-        tpc.*, 
-        md.District_Name AS district_name, 
-        blk.Block_Name AS block_name,
-        pc.name_of_production_centre AS productioncenter_name,
-        s.name AS scheme_name
-    FROM target_productioncenter tpc
-    LEFT JOIN master_district md ON tpc.district_id = md.id
-    LEFT JOIN master_block blk ON tpc.block_id = blk.id
-    LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
-    LEFT JOIN tn_schema s ON tpc.scheme_id = s.id
-    ${whereClause}
-    ORDER BY tpc.id DESC 
-    LIMIT ? OFFSET ?
-`;
+            SELECT 
+                tpc.*, 
+                md.District_Name AS district_name, 
+                blk.Block_Name AS block_name,
+                pc.name_of_production_centre AS productioncenter_name,
+                s.name AS scheme_name
+            FROM target_productioncenter tpc
+            LEFT JOIN master_district md ON tpc.district_id = md.id
+            LEFT JOIN master_block blk ON tpc.block_id = blk.id
+            LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
+            LEFT JOIN tn_schema s ON tpc.scheme_id = s.id
+            ${whereClause}
+            ORDER BY tpc.id DESC 
+            LIMIT ? OFFSET ?
+        `;
 
-        const finalParams = [...params, limit, offset];
-        const [rows] = await db.query(dataQuery, finalParams);
+        const [rows] = await db.query(dataQuery, [...params, limit, offset]);
+        
+        // 5. Get Total for pagination
+        const [countRows] = await db.query(`SELECT COUNT(*) as total FROM target_productioncenter tpc ${whereClause}`, params);
+        const total = countRows[0].total;
 
-        // 7. Prepare Response
-        const responsePayload = {
+        // 6. Fetch Block Allocations (Pool logic)
+       // 6. Fetch Block Allocations (Pool logic) - UPDATED
+let blockAllocations = [];
+if (block_id) {
+    const [allocRes] = await db.query(
+        `SELECT 
+            tb.id, 
+            tb.scheme_type, 
+            tb.scheme_id, 
+            tb.target_quantity,
+            s.name as scheme_name
+         FROM target_block tb
+         LEFT JOIN tn_schema s ON tb.scheme_id = s.id
+         WHERE tb.block_id = ?`, 
+        [block_id]
+    );
+    blockAllocations = allocRes;
+}
+
+        res.status(200).json({
             data: rows,
-            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) }
-        };
-
-        // 8. Add District/Block Names for Frontend Headers
-        if (uDistId || uBlockId) {
-            const [names] = await db.query(
-                `SELECT 
-                    (SELECT District_Name FROM master_district WHERE id = ?) as dName,
-                    (SELECT Block_Name FROM master_block WHERE id = ?) as bName`,
-                [uDistId, uBlockId]
-            );
-            responsePayload.user_district_name = names[0]?.dName || "Unknown District";
-            responsePayload.user_block_name = names[0]?.bName || "Unknown Block";
-        }
-
-        res.status(200).json(responsePayload);
+            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+            block_allocations: blockAllocations,
+            user_district_name: District_Name || "All Districts",
+            user_block_name: Block_Name || "All Blocks"
+        });
 
     } catch (err) {
         console.error("Fetch Error:", err);
@@ -158,15 +154,15 @@ exports.getAllTargetProductionCenters = async (req, res) => {
 exports.getProductionCentersByBlock = async (req, res) => {
     try {
         const { block_id } = req.query;
-        if (!block_id) return res.status(400).json({ message: "block_id is required" });
-
+        // Logic: Fetch nurseries for the specific block
         const [rows] = await db.query(
-            `SELECT id, name_of_production_centre AS name FROM productioncenter_productioncenter WHERE block_id = ?`, 
+            `SELECT id, name_of_production_centre AS name 
+             FROM productioncenter_productioncenter 
+             WHERE block_id = ? AND status = 'approved'`, 
             [block_id]
         );
         res.status(200).json(rows);
     } catch (err) {
-        console.error("Fetch Centers Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

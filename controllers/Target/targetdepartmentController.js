@@ -43,49 +43,22 @@ exports.createTargetDepartment = async (req, res) => {
     // 5. Determine final scheme type
     const finalSchemeType = scheme_type || "Non-Scheme";
 
-    // ===================== UPDATED OVERLAP CHECK LOGIC =====================
-    // Build dynamic query based on scheme type
-    let overlapQuery, overlapParams;
-
-    if (finalSchemeType === "Scheme") {
-      // For Scheme: Check overlap with SAME department + SAME scheme_type + SAME scheme_id
-      overlapQuery = `
-        SELECT * FROM target_department 
-        WHERE department_id = ? 
-        AND scheme_type = 'Scheme'
-        AND scheme_id = ?
-        AND (
-          (? BETWEEN start_date AND end_date) 
-          OR (? BETWEEN start_date AND end_date)
-          OR (start_date BETWEEN ? AND ?)
-        )
-      `;
-      overlapParams = [department_id, scheme_id, finalStartDate, finalEndDate, finalStartDate, finalEndDate];
-    } else {
-      // For Non-Scheme: Check overlap with SAME department + Non-Scheme type only
-      overlapQuery = `
-        SELECT * FROM target_department 
-        WHERE department_id = ? 
-        AND scheme_type = 'Non-Scheme'
-        AND (
-          (? BETWEEN start_date AND end_date) 
-          OR (? BETWEEN start_date AND end_date)
-          OR (start_date BETWEEN ? AND ?)
-        )
-      `;
-      overlapParams = [department_id, finalStartDate, finalEndDate, finalStartDate, finalEndDate];
-    }
-
-    const [existing] = await db.query(overlapQuery, overlapParams);
+    // ===================== UPDATED DUPLICATE CHECK LOGIC (Similar to Block) =====================
+    const [existing] = await db.query(
+      `SELECT id FROM target_department 
+       WHERE department_id = ? 
+       AND start_date = ? 
+       AND scheme_type = ? 
+       AND (scheme_id = ? OR (scheme_id IS NULL AND ? IS NULL))`,
+      [department_id, finalStartDate, finalSchemeType, scheme_id || null, scheme_id || null]
+    );
 
     if (existing.length > 0) {
-      let errorMsg = "Target already exists for this department in this date range";
-      if (finalSchemeType === "Scheme") {
-        errorMsg = "Target already exists for this department with the selected scheme in this date range";
-      }
-      return res.status(400).json({ message: errorMsg });
+      return res.status(400).json({ 
+        message: "A target for this department and scheme already exists for this period." 
+      });
     }
-    // ==================================================================
+    // =========================================================================================
 
     // 6. Insert Data
     const [result] = await db.query(
