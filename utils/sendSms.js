@@ -26,6 +26,8 @@ const sendBillLinkSms = async (to, orderId, farmerName) => {
   try {
     const baseUrl = "https://192.168.1.39:3001";
     const billUrl = `${baseUrl}/users/generate-bill-pdf/?order_id=${orderId}`;
+   
+    
     
     const message = await client.messages.create({
       body: `Hi ${farmerName || 'Farmer'}, your bill for Order ${orderId} is ready. View here: ${billUrl}`,
