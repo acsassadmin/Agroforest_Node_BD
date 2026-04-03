@@ -17,23 +17,13 @@ const getUserId = (req) => {
 exports.createTargetBlock = async (req, res) => {
     try {
         const userId = req.user.id;
-        
-        // 1. Fetch user role
         const [userRow] = await db.query(
-            `SELECT district_id, role_name FROM users_customuser WHERE id = ?`, 
+            `SELECT district_id FROM users_customuser WHERE id = ?`, 
             [userId]
         );
 
         if (userRow.length === 0) return res.status(404).json({ message: "User not found" });
-        
-        const { district_id, role_name } = userRow[0];
-
-        // 🛑 RESTRICTION LOGIC: Only District Admin can add
-        if (role_name !== 'District Admin') {
-            return res.status(403).json({ 
-                message: `Forbidden: ${role_name}s are not authorized to allocate block targets.` 
-            });
-        }
+        const { district_id } = userRow[0];
 
         const { block_id, target_quantity, start_date, end_date, scheme_type, scheme_id } = req.body;
 
@@ -72,51 +62,80 @@ exports.getAllTargetBlocks = async (req, res) => {
     try {
         const userId = req.user.id;
         
-        // 1. Get the user's role and district
+        // 1. Get User Info
         const [userRow] = await db.query(
-            `SELECT district_id, role_name FROM users_customuser WHERE id = ?`, 
+            `SELECT u.district_id, u.department_id, d.District_Name 
+             FROM users_customuser u 
+             LEFT JOIN master_district d ON u.district_id = d.id 
+             WHERE u.id = ?`, 
             [userId]
         );
         
-        const { district_id, role_name } = userRow[0];
+        if (userRow.length === 0) return res.status(404).json({ message: "User not found" });
         
-        // 2. Define who sees everything (Superadmin/Dept Admin)
-        const isHighLevel = (role_name === 'Superadmin' || role_name === 'Department Admin');
+        const uDistId = userRow[0].district_id;
+        const uDeptId = userRow[0].department_id;
+        const uDistName = userRow[0].District_Name;
 
-        // 3. Fetch Allocations (Limits)
-        let allocQuery = `SELECT scheme_type, scheme_id, target_quantity FROM target_district WHERE YEAR(start_date) = YEAR(CURDATE())`;
-        let allocParams = [];
-        if (!isHighLevel) {
-            allocQuery += ` AND district_id = ?`;
-            allocParams.push(district_id);
+        const authHeader = req.headers.authorization;
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.decode(token);
+        const userRole = decoded?.role || "district_admin";
+
+        // 2. The Main Query
+        // Using LEFT JOIN ensures that even if a department is missing, the Block Target still shows up.
+      const dataQuery = `
+    SELECT 
+        tb.*, 
+        IFNULL(dept.name, 'General') AS department_name, 
+        b.Block_Name AS block_name, 
+        d.District_Name AS district_name, 
+        s.name AS scheme_name
+    FROM target_block tb
+    -- ✅ FIX: Handle NULLs or mismatched IDs in the JOIN condition
+    LEFT JOIN department dept ON IFNULL(tb.target_department_id, 0) = IFNULL(dept.id, 0)
+    LEFT JOIN master_block b ON tb.block_id = b.id
+    LEFT JOIN master_district d ON tb.district_id = d.id
+    LEFT JOIN tn_schema s ON tb.scheme_id = s.id
+`;
+
+        let rows = [];
+        let districtAllocations = [];
+
+        if (userRole === 'superadmin') {
+            const [allocRes] = await db.query(`SELECT * FROM target_district`);
+            districtAllocations = allocRes;
+            
+            const [dataRes] = await db.query(`${dataQuery} ORDER BY tb.id DESC`);
+            rows = dataRes;
+        } else {
+            // Get allocations for this district
+            const [allocRes] = await db.query(
+                `SELECT * FROM target_district WHERE district_id = ?`, 
+                [uDistId]
+            );
+            districtAllocations = allocRes;
+            
+            // ✅ THE FIX: Ensure your WHERE clause matches how data was saved
+            // If you previously saved data without a department_id, filtering by uDeptId will return 0 rows.
+            const [dataRes] = await db.query(
+                `${dataQuery} WHERE tb.district_id = ? ORDER BY tb.id DESC`, 
+                [uDistId]
+            );
+            rows = dataRes;
         }
-        const [districtAllocations] = await db.query(allocQuery, allocParams);
 
-        // 4. Fetch Table Data (The logic you asked for)
-        let query = `
-            SELECT tb.*, b.Block_Name as block_name, s.name as scheme_name
-            FROM target_block tb
-            LEFT JOIN master_block b ON tb.block_id = b.id
-            LEFT JOIN tn_schema s ON tb.scheme_id = s.id`;
-        
-        let params = [];
-        
-        // ✅ THE FIX: If NOT Superadmin, we filter by district. 
-        // If Superadmin, we DO NOT add the WHERE clause, so it shows ALL blocks.
-        if (!isHighLevel) {
-            query += ` WHERE tb.district_id = ?`;
-            params.push(district_id);
-        }
-
-        const [rows] = await db.query(query, params);
-
+        // 3. Final Response
         res.status(200).json({
-            data: rows,
-            district_allocations: districtAllocations,
-            user_district_id: district_id,
-            user_role: role_name // Passing role to frontend
+            success: true,
+            data: rows || [],
+            district_allocations: districtAllocations || [],
+            user_district_id: uDistId,
+            user_district_name: uDistName || "All Districts"
         });
+
     } catch (err) {
+        console.error("GET ALL ERROR:", err);
         res.status(500).json({ error: err.message });
     }
 };
