@@ -9,8 +9,8 @@ const PORT = 3001;
 
 // ✅ SSL CERT PATHS (IMPORTANT: keep double backslashes OR use /)
 const sslOptions = {
-  key: fs.readFileSync("C:\\Users\\Moneta\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.key"),
-  cert: fs.readFileSync("C:\\Users\\Moneta\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.crt"),
+  key: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.key"),
+  cert: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.crt"),
 };
 
 app.use(cors());
@@ -46,5 +46,5 @@ app.use('/master', masterRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ✅ START HTTPS SERVER (instead of app.listen)
 https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 HTTPS running at https://192.168.1.39:${PORT}`);
+  console.log(`🚀 HTTPS running at https://192.168.1.37:${PORT}`);
 });

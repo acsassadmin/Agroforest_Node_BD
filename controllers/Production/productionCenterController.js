@@ -883,10 +883,10 @@ exports.getDistrictSaplingSummary = async (req, res) => {
                 ), 0) AS total_sold,
                 
                 COALESCE((
-                    SELECT SUM(s.saplings_available * s.price_per_sapling) 
-                    FROM productioncenter_stockdetails s
-                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
-                    WHERE s.species_id = t.id AND pc.status = 'approved'
+                SELECT SUM(s.total_selled * s.price_per_sapling) 
+                FROM productioncenter_stockdetails s
+                JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                WHERE s.species_id = t.id AND pc.status = 'approved'
                 ), 0) AS total_sale_price
             FROM tbl_agroforest_trees t
             ORDER BY t.name ASC
