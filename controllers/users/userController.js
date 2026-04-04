@@ -1462,7 +1462,6 @@ exports.getCenterOrders = async (req, res) => {
                 fr.created_at as order_date,
                 f.farmer_name as farmer_name,
                 f.mobile_number as farmer_mobile,
-                f.farmer_id as farmer_code,
                 fri.id as item_id,
                 fri.stock_id,
                 fri.species_id,
@@ -1473,7 +1472,7 @@ exports.getCenterOrders = async (req, res) => {
                 t.name_tamil as species_name_tamil
             FROM users_farmerrequest fr
             JOIN users_farmerrequestitem fri ON fr.id = fri.request_id
-            LEFT JOIN users_farmeraathardetails f ON fr.farmer_id = f.farmer_id
+            LEFT JOIN users_farmeraathardetails f ON fr.farmer_id = f.user_id
             LEFT JOIN tbl_agroforest_trees t ON fri.species_id = t.id
             ${whereClause}
             ORDER BY fr.created_at DESC
