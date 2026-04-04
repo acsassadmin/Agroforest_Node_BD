@@ -7,9 +7,9 @@ const path = require('path');
 const fs = require('fs');
 const sendOtpEmail = require('../../utils/mailer');
 const redisClient = require('../../redisClient');
-const { sendOtpSms , sendBillLinkSms} = require('../../utils/sendSms');
+const { sendOtpSms, sendBillLinkSms, sendApprovalSms } = require('../../utils/sendSms');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
-const cache = new NodeCache({ stdTTL: 180 }); 
+const cache = new NodeCache({ stdTTL: 180 });
 const axios = require('axios');
 
 async function geocodeAddress(address) {
@@ -36,7 +36,7 @@ async function geocodeAddress(address) {
 //   try {
 //     // 1. Destructure Email along with other fields
 //     const { username, password, phone, role, email } = req.body;
-    
+
 //     // 2. Validate required fields
 //     if (!phone || !password || !email) {
 //       return res.status(400).json({ message: 'Phone, Password, and Email are required' });
@@ -130,7 +130,7 @@ async function geocodeAddress(address) {
 //     // 4. Insert into Database
 //     // COLUMNS: username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined
 //     // COUNT: 9 Columns
-    
+
 //     const insertQuery = `
 //       INSERT INTO users_customuser
 //         (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
@@ -149,11 +149,11 @@ async function geocodeAddress(address) {
 //       null                   // 8. ? (This is for first_name)
 //                              // 9. CURRENT_TIMESTAMP is handled by SQL
 //     ]);
-    
+
 //     // 5. Cleanup Redis
 //     await redisClient.del(`register_${e164}`);
 //     res.status(201).json({ message: "User registered successfully" });
-    
+
 //   } catch (err) {
 //     console.error("Verify OTP Error:", err);
 //     if (err.code === 'ER_DUP_ENTRY') {
@@ -222,7 +222,7 @@ async function geocodeAddress(address) {
 //       JWT_REFRESH_SECRET,
 //       { expiresIn: '7d' }
 //     );
-    
+
 //     // 5. Send Response (Added new fields here)
 //     res.json({
 //       access: accessToken,
@@ -253,15 +253,15 @@ const formatIndianPhone = (phone) => {
   if (!phone) return null;
   // Remove all non-digits
   let digits = phone.replace(/\D/g, '');
-  
+
   // If user sent 12 digits starting with 91 (e.g., 919876543210)
   if (digits.startsWith('91') && digits.length === 12) {
     digits = digits.substring(2);
   }
-  
+
   // Validate exactly 10 digits
   if (digits.length !== 10) return null;
-  
+
   // Return standard format to save in DB
   return `+91${digits}`;
 };
@@ -311,7 +311,7 @@ exports.sendLoginOtp = async (req, res) => {
 
     const payload = {
       user_id: user.id,
-      phone: formattedPhone, 
+      phone: formattedPhone,
       otp,
       username: user.username,
       role_id: user.role_id,
@@ -403,7 +403,7 @@ exports.verifyLoginOtp = async (req, res) => {
 
 // REFRESH TOKEN (Placeholder)
 exports.refreshToken = async (req, res) => {
-    res.status(501).json({ message: "Refresh token logic not implemented yet" });
+  res.status(501).json({ message: "Refresh token logic not implemented yet" });
 };
 
 
@@ -411,7 +411,7 @@ exports.forgotPassword = async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ message: 'Phone number is required' });
-    console.log(phone,"phone")
+    console.log(phone, "phone")
     const pn = parsePhoneNumberFromString(phone, 'IN');
     console.log('Input Phone:', phone, 'Parsed Result:', pn);
     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
@@ -425,7 +425,7 @@ exports.forgotPassword = async (req, res) => {
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    
+
     // Store in Redis with 10 min TTL (Key: reset_<phone>)
     await redisClient.set(`reset_${e164}`, otp, { EX: 600 });
 
@@ -442,23 +442,23 @@ exports.forgotPassword = async (req, res) => {
 exports.resetPassword = async (req, res) => {
   try {
     const { phone, otp, newPassword } = req.body;
-    
+
     if (!phone || !otp || !newPassword) {
       return res.status(400).json({ message: 'Phone, OTP, and New Password are required' });
     }
 
     // FIX 1: Add 'IN' as the second argument to handle local numbers like 978...
     const pn = parsePhoneNumberFromString(phone, 'IN');
-    
+
     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
-    
+
     const e164 = pn.number; // e.g., +919789754800
     const national = pn.nationalNumber; // e.g., 9789754800
 
     // FIX 2: Find the user in DB to get their EXACT stored phone number.
     // This ensures we check Redis with the correct key (matches forgotPassword logic).
     const [users] = await db.query(
-      'SELECT phone FROM users_customuser WHERE phone = ? OR phone = ?', 
+      'SELECT phone FROM users_customuser WHERE phone = ? OR phone = ?',
       [e164, national]
     );
 
@@ -470,7 +470,7 @@ exports.resetPassword = async (req, res) => {
 
     // Check Redis for OTP using the exact phone string from DB
     const storedOtp = await redisClient.get(`reset_${storedPhone}`);
-    
+
     if (!storedOtp) {
       return res.status(400).json({ message: 'OTP expired. Please request a new one.' });
     }
@@ -544,17 +544,17 @@ exports.deleteRole = async (req, res) => {
 
 exports.createFarmer = async (req, res) => {
   try {
-    const { 
-      name, 
-      mobile_number, 
+    const {
+      name,
+      mobile_number,
       district_id,  // Updated: matches payload and DB
       block_id,     // Updated: matches payload and DB
       village_id,   // Updated: matches payload and DB
-      aadhar_no, 
-      land_panel_details, 
-      species_preferred, 
-      purpose, 
-      type 
+      aadhar_no,
+      land_panel_details,
+      species_preferred,
+      purpose,
+      type
     } = req.body;
 
     // 1. Determine Prefix
@@ -605,14 +605,14 @@ exports.createFarmer = async (req, res) => {
       block_id,                 // Matches block_id column
       village_id,               // Matches village_id column
       land_panel_details,
-      JSON.stringify(species_preferred), 
+      JSON.stringify(species_preferred),
       purpose,
       type
     ]);
 
-    res.status(201).json({ 
-      message: "Farmer created successfully", 
-      farmer_id: farmer_id 
+    res.status(201).json({
+      message: "Farmer created successfully",
+      farmer_id: farmer_id
     });
 
   } catch (err) {
@@ -631,15 +631,15 @@ exports.updateFarmer = async (req, res) => {
 
     // 2. Destructure fields from body
     // We focus on species_preferred, but allow updating other fields if provided
-    const { 
-      species_preferred, 
-      name, 
-      mobile_number, 
-      village_id, 
-      block_id, 
-      district_id, 
-      purpose, 
-      land_panel_details 
+    const {
+      species_preferred,
+      name,
+      mobile_number,
+      village_id,
+      block_id,
+      district_id,
+      purpose,
+      land_panel_details
     } = req.body;
 
     // 3. Validation: Ensure there is something to update
@@ -708,9 +708,9 @@ exports.updateFarmer = async (req, res) => {
       return res.status(404).json({ error: "Farmer not found with ID: " + id });
     }
 
-    res.status(200).json({ 
-      message: "Farmer details updated successfully", 
-      farmer_id: id 
+    res.status(200).json({
+      message: "Farmer details updated successfully",
+      farmer_id: id
     });
 
   } catch (err) {
@@ -746,7 +746,7 @@ exports.getFarmerAadhar = async (req, res) => {
 
       const farmer = farmerRows[0];
       const farmerPk = farmer.id; // Use the actual PK (integer) for lands
-      console.log(farmer.id , "farmer_id")
+      console.log(farmer.id, "farmer_id")
       // 2. Fetch Land Details using the Farmer PK
       const [landRows] = await db.query(
         `SELECT * FROM farmer_land_details WHERE farmer_id = ?`,
@@ -796,7 +796,7 @@ exports.getFarmerAadhar = async (req, res) => {
       });
     }
 
-  
+
 
   } catch (err) {
     console.error(err);
@@ -1139,7 +1139,7 @@ exports.registerNonFarmer = async (req, res) => {
       return res.status(400).json({ error: "Invalid Aadhaar number" });
     }
 
-    
+
 
     // Check if Aadhaar already exists in farmer table
     const [existingFarmer] = await db.query(
@@ -1202,15 +1202,15 @@ exports.registerNonFarmer = async (req, res) => {
        (aadhar_no, non_farmer_id, farmer_name, purpose, mobile_number, district_id, address, latitude, longitude, type, user_id) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'non-farmer', ?)`,
       [
-        aadhar_no, 
-        newNonFarmerId, 
-        farmer_name, 
-        purpose, 
-        mobile_number, 
-        district_id, 
-        address, 
-        latitude, 
-        longitude, 
+        aadhar_no,
+        newNonFarmerId,
+        farmer_name,
+        purpose,
+        mobile_number,
+        district_id,
+        address,
+        latitude,
+        longitude,
         newUserPk
       ]
     );
@@ -1233,10 +1233,10 @@ exports.registerNonFarmer = async (req, res) => {
       message: "Registration successful!",
       access: accessToken,
       refresh: refreshToken,
-      user_id: newUserPk,           
+      user_id: newUserPk,
       role: 'farmer',
       user_name: farmer_name,
-      farmer_id: newNonFarmerId,    
+      farmer_id: newNonFarmerId,
       production_center_id: null,
       production_center_status: null,
       department_id: null,
@@ -1254,123 +1254,127 @@ exports.registerNonFarmer = async (req, res) => {
 
 // ===================== FARMER REQUEST =====================
 exports.farmerRequest = async (req, res) => {
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        // 1. Destructure from frontend payload
-        const { farmer_id, production_center_id, items } = req.body;
-        const userId = req.user?.id || 1; // ID of logged-in user (officer/farmer)
+    // 1. Destructure from frontend payload
+    const { farmer_id, production_center_id, items } = req.body;
+    const userId = req.user?.id || 1; // ID of logged-in user (officer/farmer)
 
-        // Validation
-        if (!farmer_id || !production_center_id || !items || items.length === 0) {
-            return res.status(400).json({ 
-                error: "Farmer ID, Production Center, and Items are required" 
-            });
-        }
+    // Validation
+    if (!farmer_id || !production_center_id || !items || items.length === 0) {
+      return res.status(400).json({
+        error: "Farmer ID, Production Center, and Items are required"
+      });
+    }
 
-        // 2. Insert into users_farmerrequest (Header Table)
-        const [result] = await connection.query(
-            `INSERT INTO users_farmerrequest 
+    // 2. Insert into users_farmerrequest (Header Table)
+    const [result] = await connection.query(
+      `INSERT INTO users_farmerrequest 
              (farmer_id, status, created_at, created_by_id, production_center_id) 
              VALUES (?, 'pending', NOW(), ?, ?)`,
-            [farmer_id, userId, production_center_id] // <- fixed
-        );
+      [farmer_id, userId, production_center_id] // <- fixed
+    );
 
-        const requestId = result.insertId;
+    const requestId = result.insertId;
 
-        // 3. Generate Order ID (Format: A-YYYYMMDD-XXXX)
-        const today = new Date();
-        const dateStr = today.toISOString().slice(0, 10).replace(/-/g, ""); // e.g., 20260321
-        const paddedId = String(requestId).padStart(4, "0"); // e.g., 0001
-        const orderId = `A-${dateStr}-${paddedId}`; // Final: A-20260321-0001
+    // 3. Generate Order ID (Format: A-YYYYMMDD-XXXX)
+    const today = new Date();
+    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, ""); // e.g., 20260321
+    const paddedId = String(requestId).padStart(4, "0"); // e.g., 0001
+    const orderId = `A-${dateStr}-${paddedId}`; // Final: A-20260321-0001
 
-        await connection.query(
-            `UPDATE users_farmerrequest SET orderid = ? WHERE id = ?`,
-            [orderId, requestId]
-        );
+    await connection.query(
+      `UPDATE users_farmerrequest SET orderid = ? WHERE id = ?`,
+      [orderId, requestId]
+    );
 
-        // 4. Insert Items into users_farmerrequestitem
-        const itemValues = items.map(item => [
-            requestId,              // request_id
-            item.stock_id,          // stock_id
-            item.species_id || null,// species_id (optional)
-            item.quantity,          // requested_quantity
-            'pending',              // status
-            new Date()              // created_at
-        ]);
+    // 4. Insert Items into users_farmerrequestitem
+    const itemValues = items.map(item => [
+      requestId,              // request_id
+      item.stock_id,          // stock_id
+      item.species_id || null,// species_id (optional)
+      item.quantity,          // requested_quantity
+      'pending',              // status
+      new Date()              // created_at
+    ]);
 
-        await connection.query(
-            `INSERT INTO users_farmerrequestitem 
+    await connection.query(
+      `INSERT INTO users_farmerrequestitem 
              (request_id, stock_id, species_id, requested_quantity, status, created_at) 
              VALUES ?`,
-            [itemValues]
-        );
+      [itemValues]
+    );
 
-        await connection.commit();
+    await connection.commit();
 
-        res.status(201).json({ 
-            message: "Order placed successfully", 
-            order_id: orderId, 
-            request_id: requestId 
-        });
+    res.status(201).json({
+      message: "Order placed successfully",
+      order_id: orderId,
+      request_id: requestId
+    });
 
-    } catch (err) {
-        await connection.rollback();
-        console.error("Order Error:", err);
-        res.status(500).json({ error: err.message });
-    } finally {
-        connection.release();
-    }
+  } catch (err) {
+    await connection.rollback();
+    console.error("Order Error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
 };
 
 
 
 exports.approveItem = async (req, res) => {
   const connection = await db.getConnection();
+
   try {
     await connection.beginTransaction();
 
     const { id } = req.params;
-    const { action, approved_quantity, type, scheme_id, schemed_rate, total_amount } = req.body;
+    const { action, approved_quantity, type, scheme_id, schemed_rate } = req.body;
 
     console.log("Incoming Request:", { id, action, approved_quantity });
 
+    let requestId = null;
+
+    // =====================================================
+    // ✅ APPROVE
+    // =====================================================
     if (action === "approve") {
+
       if (approved_quantity === undefined || approved_quantity === null) {
         return res.status(400).json({ error: "Approved quantity is required" });
       }
 
-      // 1. Update request item
-      const [updateResult] = await connection.query(
+      // 1. Update item (schemed_rate = total_amount)
+      await connection.query(
         `UPDATE users_farmerrequestitem 
-SET 
-    approved_quantity = ?, 
-    status = 'approved',
-    type = ?,
-    scheme_id = ?,
-    schemed_rate = ?,
-    total_amount = ?
-WHERE id = ?`,
+         SET approved_quantity = ?, 
+             status = 'approved',
+             type = ?,
+             scheme_id = ?,
+             schemed_rate = ?,
+             total_amount = ?
+         WHERE id = ?`,
         [
-  approved_quantity,
-  type || 'non-scheme',
-  type === 'scheme' ? scheme_id : null,
-  schemed_rate || null,
-  total_amount || 0,
-  id
-]
+          approved_quantity,
+          type || 'non-scheme',
+          type === 'scheme' ? scheme_id : null,
+          schemed_rate || 0,
+          schemed_rate || 0, // ✅ treated as total amount
+          id
+        ]
       );
 
-      console.log("Request Item Updated:", updateResult);
-
-      // 2. Get stock_id
+      // 2. Get request + stock
       const [itemRows] = await connection.query(
-        `SELECT stock_id FROM users_farmerrequestitem WHERE id = ?`,
+        `SELECT stock_id, request_id 
+         FROM users_farmerrequestitem 
+         WHERE id = ?`,
         [id]
       );
-
-      console.log("Fetched Item Rows:", itemRows);
 
       if (itemRows.length === 0) {
         await connection.rollback();
@@ -1378,66 +1382,130 @@ WHERE id = ?`,
       }
 
       const stockId = itemRows[0].stock_id;
-      console.log("Stock ID:", stockId);
-
-      // OPTIONAL: Check current allocated_quantity BEFORE update
-      const [beforeStock] = await connection.query(
-        `SELECT allocated_quantity FROM productioncenter_stockdetails WHERE id = ?`,
-        [stockId]
-      );
-
-      console.log("Before Update Stock:", beforeStock);
+      requestId = itemRows[0].request_id;
 
       // 3. Update stock
-      const [stockUpdateResult] = await connection.query(
+      await connection.query(
         `UPDATE productioncenter_stockdetails 
          SET allocated_quantity = allocated_quantity + ? 
          WHERE id = ?`,
         [approved_quantity, stockId]
       );
 
-      console.log("Stock Update Result:", stockUpdateResult);
+    }
 
-      // OPTIONAL: Check AFTER update
-      const [afterStock] = await connection.query(
-        `SELECT allocated_quantity FROM productioncenter_stockdetails WHERE id = ?`,
-        [stockId]
-      );
+    // =====================================================
+    // ❌ REJECT
+    // =====================================================
+    else if (action === "reject") {
 
-      console.log("After Update Stock:", afterStock);
-
-    } else if (action === "reject") {
-      const [rejectResult] = await connection.query(
+      await connection.query(
         `UPDATE users_farmerrequestitem 
          SET status = 'rejected', approved_quantity = 0 
          WHERE id = ?`,
         [id]
       );
 
-      console.log("Reject Result:", rejectResult);
+      const [itemRows] = await connection.query(
+        `SELECT request_id FROM users_farmerrequestitem WHERE id = ?`,
+        [id]
+      );
+
+      if (itemRows.length > 0) {
+        requestId = itemRows[0].request_id;
+      }
+
     } else {
       return res.status(400).json({ error: "Invalid action" });
     }
 
     await connection.commit();
-    console.log("Transaction committed successfully");
+    console.log("✅ Transaction committed");
 
-    // ✅ CLEAR CACHE HERE
-try {
-  const keys = await redisClient.keys("stock_details_*");
-  if (keys.length > 0) {
-    await redisClient.del(keys);
-    console.log("🧹 Stock cache cleared:", keys);
-  } else {
-    console.log("ℹ️ No cache keys found");
-  }
-} catch (cacheErr) {
-  console.error("Cache clearing error:", cacheErr);
-}
+    // =====================================================
+    // 📩 FETCH DATA FOR SMS
+    // =====================================================
+    if (requestId) {
+      try {
+
+        const [rows] = await db.query(
+          `SELECT 
+              u.phone,
+              u.first_name,
+              pc.name_of_production_centre AS pc_name,
+              pc.complete_address AS pc_address,
+              pc.contact_person,
+              fri.status,
+              fri.approved_quantity,
+              fri.schemed_rate AS total_amount, -- ✅ using schemed_rate as total
+              s.name AS species_name
+           FROM users_farmerrequest fr
+           JOIN users_customuser u ON fr.farmer_id = u.id
+           JOIN users_farmerrequestitem fri ON fr.id = fri.request_id
+           LEFT JOIN tbl_agroforest_trees s ON fri.species_id = s.id
+           LEFT JOIN productioncenter_productioncenter pc ON fr.production_center_id = pc.id
+           WHERE fr.id = ?`,
+          [requestId]
+        );
+
+        if (rows.length > 0) {
+
+          let approvedItems = [];
+          let rejectedItems = [];
+          let totalAmountSum = 0;
+
+          rows.forEach(r => {
+            if (r.status === 'approved') {
+              approvedItems.push({
+                name: r.species_name,
+                qty: r.approved_quantity
+              });
+
+              totalAmountSum += Number(r.total_amount || 0); // ✅ consistent
+            } else if (r.status === 'rejected') {
+              rejectedItems.push({
+                name: r.species_name
+              });
+            }
+          });
+
+          const farmer = rows[0];
+
+          await sendApprovalSms(
+            farmer.phone,
+            farmer.first_name,
+            farmer.pc_name,
+            farmer.pc_address,
+            farmer.contact_person,
+            approvedItems,
+            rejectedItems,
+            totalAmountSum
+          );
+        }
+
+      } catch (smsErr) {
+        console.error("❌ SMS Error:", smsErr);
+      }
+    }
+
+    // =====================================================
+    // 🧹 CLEAR CACHE
+    // =====================================================
+    try {
+      const keys = await redisClient.keys("stock_details_*");
+      if (keys.length > 0) {
+        await redisClient.del(keys);
+        console.log("🧹 Cache cleared");
+      }
+    } catch (err) {
+      console.error("Cache error:", err);
+    }
+
     res.json({ message: "Updated successfully" });
+
   } catch (err) {
     await connection.rollback();
-    console.error("Approve Item Error:", err);
+    console.error("❌ Approve Item Error:", err);
     res.status(500).json({ error: err.message });
   } finally {
     connection.release();
@@ -1446,30 +1514,30 @@ try {
 
 
 exports.getCenterOrders = async (req, res) => {
-    try {
-        const { production_center_id, user_id,status, limit, offset } = req.query;
+  try {
+    const { production_center_id, user_id, status, limit, offset } = req.query;
 
-        console.log("👉 Incoming Query Params:", req.query);
+    console.log("👉 Incoming Query Params:", req.query);
 
-        // if (!production_center_id && !user_id) {
-        //     return res.status(400).json({
-        //         error: "Either production_center_id or user_id is required"
-        //     });
-        // }
+    // if (!production_center_id && !user_id) {
+    //     return res.status(400).json({
+    //         error: "Either production_center_id or user_id is required"
+    //     });
+    // }
 
-        let whereConditions = [];
-        let params = [];
+    let whereConditions = [];
+    let params = [];
 
-        if (production_center_id) {
-            whereConditions.push(`fr.production_center_id = ?`);
-            params.push(production_center_id);
-        }
+    if (production_center_id) {
+      whereConditions.push(`fr.production_center_id = ?`);
+      params.push(production_center_id);
+    }
 
-        if (user_id) {
-            whereConditions.push(`fr.created_by_id = ?`);
-            params.push(user_id);
-        }
-        if (status) {
+    if (user_id) {
+      whereConditions.push(`fr.created_by_id = ?`);
+      params.push(user_id);
+    }
+    if (status) {
       // support comma-separated list or single status
       const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
       if (statuses.length === 1) {
@@ -1481,21 +1549,21 @@ exports.getCenterOrders = async (req, res) => {
         params.push(...statuses);
       }
     }
-        const whereClause = whereConditions.length
-            ? `WHERE ${whereConditions.join(" AND ")}`
-            : "";
+    const whereClause = whereConditions.length
+      ? `WHERE ${whereConditions.join(" AND ")}`
+      : "";
 
-        let limitValue = limit ? parseInt(limit) : undefined;
-        let offsetValue = offset ? parseInt(offset) : undefined;
-        
-        if (isNaN(limitValue)) limitValue = undefined;
-        if (isNaN(offsetValue)) offsetValue = undefined;
+    let limitValue = limit ? parseInt(limit) : undefined;
+    let offsetValue = offset ? parseInt(offset) : undefined;
 
-        const limitClause = limitValue ? `LIMIT ?` : "";
-        const offsetClause = offsetValue ? `OFFSET ?` : "";
+    if (isNaN(limitValue)) limitValue = undefined;
+    if (isNaN(offsetValue)) offsetValue = undefined;
 
-        // Use DESC for Newest first, or ASC for Oldest first
-        const query = `
+    const limitClause = limitValue ? `LIMIT ?` : "";
+    const offsetClause = offsetValue ? `OFFSET ?` : "";
+
+    // Use DESC for Newest first, or ASC for Oldest first
+    const query = `
             SELECT 
                 fr.id as request_id,
                 fr.orderid,
@@ -1503,6 +1571,7 @@ exports.getCenterOrders = async (req, res) => {
                 fr.status as order_status,
                 fr.created_at as order_date,
                 f.farmer_name as farmer_name,
+                f.type as farmer_type,
                 f.mobile_number as farmer_mobile,
                 f.farmer_id as farmer_code,
                 fri.id as item_id,
@@ -1524,133 +1593,134 @@ exports.getCenterOrders = async (req, res) => {
             ${limitClause} ${offsetClause}
         `;
 
-        const queryParams = [...params, limitValue, offsetValue].filter(v => v !== undefined);
-        const [rows] = await db.query(query, queryParams);
+    const queryParams = [...params, limitValue, offsetValue].filter(v => v !== undefined);
+    const [rows] = await db.query(query, queryParams);
 
-        // ✅ FIXED: Using Map to preserve the SQL Sort Order
-        const ordersMap = new Map();
+    // ✅ FIXED: Using Map to preserve the SQL Sort Order
+    const ordersMap = new Map();
 
-        rows.forEach(row => {
-            if (!ordersMap.has(row.request_id)) {
-                ordersMap.set(row.request_id, {
-                    request_id: row.request_id,
-                    orderid: row.orderid,
-                    order_status: row.order_status,
-                    order_date: row.order_date,
-                    farmer_name: row.farmer_name,
-                    farmer_mobile: row.farmer_mobile,
-                    production_center_id: row.production_center_id,
-                    farmer_code: row.farmer_code,
-                    requested_items: []
-                });
-            }
-
-            if (row.item_id) {
-                ordersMap.get(row.request_id).requested_items.push({
-                    item_id: row.item_id,
-                    stock_id: row.stock_id,
-                    species_id: row.species_id,
-                    species_name: row.species_name,
-                    species_name_tamil: row.species_name_tamil,
-                    requested_quantity: row.requested_quantity,
-                    approved_quantity: row.approved_quantity,
-                    item_status: row.item_status,
-                    type : row.type,
-                    scheme_id: row.scheme_id,
-
-                });
-            }
+    rows.forEach(row => {
+      if (!ordersMap.has(row.request_id)) {
+        ordersMap.set(row.request_id, {
+          request_id: row.request_id,
+          orderid: row.orderid,
+          order_status: row.order_status,
+          order_date: row.order_date,
+          farmer_name: row.farmer_name,
+          farmer_type: row.farmer_type,
+          farmer_mobile: row.farmer_mobile,
+          production_center_id: row.production_center_id,
+          farmer_code: row.farmer_code,
+          requested_items: []
         });
+      }
 
-        // Convert Map back to array (stays in order)
-        const results = Array.from(ordersMap.values());
+      if (row.item_id) {
+        ordersMap.get(row.request_id).requested_items.push({
+          item_id: row.item_id,
+          stock_id: row.stock_id,
+          species_id: row.species_id,
+          species_name: row.species_name,
+          species_name_tamil: row.species_name_tamil,
+          requested_quantity: row.requested_quantity,
+          approved_quantity: row.approved_quantity,
+          item_status: row.item_status,
+          type: row.type,
+          scheme_id: row.scheme_id,
 
-        res.json({
-            count: results.length,
-            results
         });
+      }
+    });
 
-    } catch (err) {
-        console.error("❌ Fetch Orders Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+    // Convert Map back to array (stays in order)
+    const results = Array.from(ordersMap.values());
+
+    res.json({
+      count: results.length,
+      results
+    });
+
+  } catch (err) {
+    console.error("❌ Fetch Orders Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 
 
 exports.getTnSchemas = async (req, res) => {
-    try {
-        // Fetch all entries from tn_schema table
-        const [rows] = await db.query(`SELECT id, name FROM tn_schema ORDER BY id ASC`);
-        
-        res.json({ 
-            count: rows.length, 
-            results: rows 
-        });
-    } catch (err) {
-        console.error("Error fetching schemas:", err);
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    // Fetch all entries from tn_schema table
+    const [rows] = await db.query(`SELECT id, name FROM tn_schema ORDER BY id ASC`);
+
+    res.json({
+      count: rows.length,
+      results: rows
+    });
+  } catch (err) {
+    console.error("Error fetching schemas:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 
 // 1. Update Request Header (Type & Scheme)
 exports.updateRequestHeader = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status } = req.body;
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
 
-        await db.query(
-            `UPDATE users_farmerrequest SET status = ? WHERE id = ?`,
-            [status , id]
-        );
-        res.json({ message: "Header updated" });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    await db.query(
+      `UPDATE users_farmerrequest SET status = ? WHERE id = ?`,
+      [status, id]
+    );
+    res.json({ message: "Header updated" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // 2. Order Placed / Billing
 exports.orderPlaced = async (req, res) => {
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        // ❌ removed type, scheme_id from header
-        const { request_id, payment_type, total_amount, scheme_total_amount, items: itemUpdates } = req.body;
+    // ❌ removed type, scheme_id from header
+    const { request_id, payment_type, total_amount, scheme_total_amount, items: itemUpdates } = req.body;
 
-        // ✅ 1. Update item-level type & scheme_id
-        if (itemUpdates && itemUpdates.length > 0) {
-            for (const item of itemUpdates) {
-    await connection.query(
-        `UPDATE users_farmerrequestitem 
+    // ✅ 1. Update item-level type & scheme_id
+    if (itemUpdates && itemUpdates.length > 0) {
+      for (const item of itemUpdates) {
+        await connection.query(
+          `UPDATE users_farmerrequestitem 
          SET type = ?, scheme_id = ?, schemed_rate = ?
          WHERE id = ?`,
-        [
+          [
             item.type || 'non-scheme',
             item.type === 'scheme' ? item.scheme_id : null,
             item.schemed_rate || null,
             item.id
-        ]
-    );
-}
-        }
+          ]
+        );
+      }
+    }
 
-        console.log("Incoming Order:", { request_id, payment_type, total_amount, scheme_total_amount });
+    console.log("Incoming Order:", { request_id, payment_type, total_amount, scheme_total_amount });
 
-        // ✅ 2. Update request header (REMOVED type & scheme_id)
-        const [headerResult] = await connection.query(
-            `UPDATE users_farmerrequest 
+    // ✅ 2. Update request header (REMOVED type & scheme_id)
+    const [headerResult] = await connection.query(
+      `UPDATE users_farmerrequest 
              SET status = 'billed', payment_type = ?, total_amount = ?, scheme_total_amount = ? 
              WHERE id = ?`,
-            [payment_type, total_amount, scheme_total_amount, request_id]
-        );
+      [payment_type, total_amount, scheme_total_amount, request_id]
+    );
 
-        console.log("Header Update Result:", headerResult);
+    console.log("Header Update Result:", headerResult);
 
-        // ✅ 3. Get approved items WITH type & scheme
-        const [approvedItems] = await connection.query(
-            `SELECT 
+    // ✅ 3. Get approved items WITH type & scheme
+    const [approvedItems] = await connection.query(
+      `SELECT 
                 fri.stock_id, 
                 fri.approved_quantity,
                 fri.type,
@@ -1659,126 +1729,126 @@ exports.orderPlaced = async (req, res) => {
              FROM users_farmerrequestitem fri
              JOIN productioncenter_stockdetails ps ON fri.stock_id = ps.id
              WHERE fri.request_id = ? AND fri.approved_quantity > 0`,
-            [request_id]
-        );
+      [request_id]
+    );
 
-        console.log("Approved Items with Price:", approvedItems);
+    console.log("Approved Items with Price:", approvedItems);
 
-        // ✅ 4. Update stock for each item (logic unchanged)
-        for (const item of approvedItems) {
-            console.log("Processing Item:", item);
+    // ✅ 4. Update stock for each item (logic unchanged)
+    for (const item of approvedItems) {
+      console.log("Processing Item:", item);
 
-            const itemTotalPrice = item.approved_quantity * (item.price_per_sapling || 0);
+      const itemTotalPrice = item.approved_quantity * (item.price_per_sapling || 0);
 
-            const [beforeStock] = await connection.query(
-                `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
+      const [beforeStock] = await connection.query(
+        `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
                  FROM productioncenter_stockdetails 
                  WHERE id = ?`,
-                [item.stock_id]
-            );
+        [item.stock_id]
+      );
 
-            console.log(`Before Update (stock_id=${item.stock_id}):`, beforeStock);
+      console.log(`Before Update (stock_id=${item.stock_id}):`, beforeStock);
 
-            const [updateResult] = await connection.query(
-                `UPDATE productioncenter_stockdetails
+      const [updateResult] = await connection.query(
+        `UPDATE productioncenter_stockdetails
                  SET 
                     saplings_available = saplings_available - ?,
                     allocated_quantity = allocated_quantity - ?,
                     total_selled = total_selled + ?,
                     total_selled_price = total_selled_price + ?
                  WHERE id = ?`,
-                [
-                    item.approved_quantity,
-                    item.approved_quantity,
-                    item.approved_quantity,
-                    itemTotalPrice,
-                    item.stock_id
-                ]
-            );
+        [
+          item.approved_quantity,
+          item.approved_quantity,
+          item.approved_quantity,
+          itemTotalPrice,
+          item.stock_id
+        ]
+      );
 
-            console.log(`Update Result (stock_id=${item.stock_id}):`, updateResult);
+      console.log(`Update Result (stock_id=${item.stock_id}):`, updateResult);
 
-            const [afterStock] = await connection.query(
-                `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
+      const [afterStock] = await connection.query(
+        `SELECT saplings_available, allocated_quantity, total_selled, total_selled_price
                  FROM productioncenter_stockdetails 
                  WHERE id = ?`,
-                [item.stock_id]
-            );
+        [item.stock_id]
+      );
 
-            console.log(`After Update (stock_id=${item.stock_id}):`, afterStock);
+      console.log(`After Update (stock_id=${item.stock_id}):`, afterStock);
 
-            if (updateResult.affectedRows === 0) {
-                console.log("⚠️ No stock row updated for stock_id:", item.stock_id);
-            }
+      if (updateResult.affectedRows === 0) {
+        console.log("⚠️ No stock row updated for stock_id:", item.stock_id);
+      }
 
-            if (afterStock.length > 0 && afterStock[0].saplings_available < 0) {
-                console.log("❌ Negative saplings_available detected!", afterStock[0]);
-            }
-        }
-
-        await connection.commit();
-        console.log("Transaction committed successfully");
-
-        // Clear Cache
-        try {
-            const keys = await redisClient.keys("stock_details_*");
-            if (keys.length > 0) {
-                await redisClient.del(keys);
-                console.log("🧹 Stock cache cleared:", keys);
-            } else {
-                console.log("No cache keys found");
-            }
-        } catch (cacheErr) {
-            console.error("Cache clearing error:", cacheErr);
-        }
-
-        // SEND BILL LINK SMS (unchanged)
-        try {
-            const [orderData] = await db.query(
-                `SELECT orderid, farmer_id FROM users_farmerrequest WHERE id = ?`,
-                [request_id]
-            );
-            
-            if (orderData.length > 0) {
-                const { orderid, farmer_id } = orderData[0];
-
-                const [userRows] = await db.query(
-                    `SELECT phone, username FROM users_customuser WHERE id = ?`,
-                    [farmer_id]
-                );
-
-                if (userRows.length > 0 && userRows[0].phone) {
-                    const farmerPhone = userRows[0].phone;
-                    const farmerName = userRows[0].username;
-
-                    sendBillLinkSms(farmerPhone, orderid, farmerName)
-                        .then(() => console.log("✅ Bill SMS sent to:", farmerPhone))
-                        .catch((smsErr) => console.error("❌ Bill SMS failed:", smsErr.message));
-                } else {
-                    console.log("⚠️ Farmer phone not found for user_id:", farmer_id);
-                }
-            }
-        } catch (smsErr) {
-            console.error("Bill SMS error (non-blocking):", smsErr.message);
-        }
-
-        res.json({ message: "Bill generated successfully and stock updated" });
-
-    } catch (err) {
-        await connection.rollback();
-        console.error("Order Billing Error:", err);
-        res.status(500).json({ error: err.message });
-    } finally {
-        connection.release();
+      if (afterStock.length > 0 && afterStock[0].saplings_available < 0) {
+        console.log("❌ Negative saplings_available detected!", afterStock[0]);
+      }
     }
+
+    await connection.commit();
+    console.log("Transaction committed successfully");
+
+    // Clear Cache
+    try {
+      const keys = await redisClient.keys("stock_details_*");
+      if (keys.length > 0) {
+        await redisClient.del(keys);
+        console.log("🧹 Stock cache cleared:", keys);
+      } else {
+        console.log("No cache keys found");
+      }
+    } catch (cacheErr) {
+      console.error("Cache clearing error:", cacheErr);
+    }
+
+    // SEND BILL LINK SMS (unchanged)
+    try {
+      const [orderData] = await db.query(
+        `SELECT orderid, farmer_id FROM users_farmerrequest WHERE id = ?`,
+        [request_id]
+      );
+
+      if (orderData.length > 0) {
+        const { orderid, farmer_id } = orderData[0];
+
+        const [userRows] = await db.query(
+          `SELECT phone, username FROM users_customuser WHERE id = ?`,
+          [farmer_id]
+        );
+
+        if (userRows.length > 0 && userRows[0].phone) {
+          const farmerPhone = userRows[0].phone;
+          const farmerName = userRows[0].username;
+
+          sendBillLinkSms(farmerPhone, orderid, farmerName)
+            .then(() => console.log("✅ Bill SMS sent to:", farmerPhone))
+            .catch((smsErr) => console.error("❌ Bill SMS failed:", smsErr.message));
+        } else {
+          console.log("⚠️ Farmer phone not found for user_id:", farmer_id);
+        }
+      }
+    } catch (smsErr) {
+      console.error("Bill SMS error (non-blocking):", smsErr.message);
+    }
+
+    res.json({ message: "Bill generated successfully and stock updated" });
+
+  } catch (err) {
+    await connection.rollback();
+    console.error("Order Billing Error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
 };
 
 // DASHBOARD API GET CALL 
 
 
 exports.getTopProductionCenters = async (req, res) => {
-    try {
-        const query = `
+  try {
+    const query = `
             SELECT 
                 pc.id as production_center_id,
                 pc.name_of_production_centre,
@@ -1794,19 +1864,19 @@ exports.getTopProductionCenters = async (req, res) => {
             LIMIT 10;
         `;
 
-        const [results] = await db.query(query);
-        res.json(results);
+    const [results] = await db.query(query);
+    res.json(results);
 
-    } catch (err) {
-        console.error("Top Production Centers Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+  } catch (err) {
+    console.error("Top Production Centers Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // 2. Saplings Available District Wise
 exports.getSaplingsDistrictWise = async (req, res) => {
-    try {
-        const query = `
+  try {
+    const query = `
             SELECT 
                 d.id as district_id,
                 d.District_Name,
@@ -1820,21 +1890,21 @@ exports.getSaplingsDistrictWise = async (req, res) => {
             ORDER BY d.District_Name ASC;
         `;
 
-        const [results] = await db.query(query);
-        res.json(results);
+    const [results] = await db.query(query);
+    res.json(results);
 
-    } catch (err) {
-        console.error("District Wise Saplings Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+  } catch (err) {
+    console.error("District Wise Saplings Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // ===================== MAP DATA =====================
 
 // Get all active production centers with location and stock
 exports.getProductionCentersForMap = async (req, res) => {
-    try {
-        const query = `
+  try {
+    const query = `
             SELECT 
                 pc.id,
                 pc.name_of_production_centre,
@@ -1871,23 +1941,23 @@ exports.getProductionCentersForMap = async (req, res) => {
             ORDER BY pc.name_of_production_centre ASC
         `;
 
-        const [results] = await db.query(query);
+    const [results] = await db.query(query);
 
-        // Optional: Convert null lat/lng to 0 if needed by your frontend map library
-        const formattedResults = results.map(center => ({
-            ...center,
-            latitude: parseFloat(center.latitude) || 0,
-            longitude: parseFloat(center.longitude) || 0,
-            total_saplings_available: parseInt(center.total_saplings_available) || 0,
-            total_allocated_quantity: parseInt(center.total_allocated_quantity) || 0
-        }));
+    // Optional: Convert null lat/lng to 0 if needed by your frontend map library
+    const formattedResults = results.map(center => ({
+      ...center,
+      latitude: parseFloat(center.latitude) || 0,
+      longitude: parseFloat(center.longitude) || 0,
+      total_saplings_available: parseInt(center.total_saplings_available) || 0,
+      total_allocated_quantity: parseInt(center.total_allocated_quantity) || 0
+    }));
 
-        res.json(formattedResults);
+    res.json(formattedResults);
 
-    } catch (err) {
-        console.error("Get Map Data Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+  } catch (err) {
+    console.error("Get Map Data Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 exports.getFarmerRequestItemByStockId = async (req, res) => {
   try {
@@ -1929,186 +1999,186 @@ exports.getFarmerRequestItemByStockId = async (req, res) => {
 
 
 exports.getDashboardCounts = async (req, res) => {
-    try {
-        // 1. Get data from Token (Logged in user)
-        const user = req.user || {}; 
-        
-        // 2. Get data from URL Query Params (For Postman Testing)
-        // We prioritize Query Params > Token Data
-        const role = req.query.role || user.role;
-        const department_id = req.query.department_id || user.department_id;
-        const district_id = req.query.district_id || user.district_id;
-        const block_id = req.query.block_id || user.block_id;
+  try {
+    // 1. Get data from Token (Logged in user)
+    const user = req.user || {};
 
-        // ---------------------------------------------------------
-        // STRICT ROLE CHECK
-        // ---------------------------------------------------------
-        if (role) {
-            
-            // --- Sub-validations for specific roles ---
-            if (role === 'department_admin' && !department_id) {
-                return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
-            }
-            if (role === 'district_admin' && !district_id) {
-                return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
-            }
-            if (role === 'block_admin' && !block_id) {
-                return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
-            }
+    // 2. Get data from URL Query Params (For Postman Testing)
+    // We prioritize Query Params > Token Data
+    const role = req.query.role || user.role;
+    const department_id = req.query.department_id || user.department_id;
+    const district_id = req.query.district_id || user.district_id;
+    const block_id = req.query.block_id || user.block_id;
 
-            // ---------------------------------------------------------
-            // PREPARE DYNAMIC FILTERS
-            // ---------------------------------------------------------
-            let filterColumn = null;
-            let filterValue = null;
+    // ---------------------------------------------------------
+    // STRICT ROLE CHECK
+    // ---------------------------------------------------------
+    if (role) {
 
-            if (role === 'department_admin') {
-                filterColumn = 'department_id';
-                filterValue = department_id;
-            } else if (role === 'district_admin') {
-                filterColumn = 'district_id';
-                filterValue = district_id;
-            } else if (role === 'block_admin') {
-                filterColumn = 'block_id';
-                filterValue = block_id;
-            }
-            // If role is superadmin, filterColumn remains null (No filter applied)
+      // --- Sub-validations for specific roles ---
+      if (role === 'department_admin' && !department_id) {
+        return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+      }
+      if (role === 'district_admin' && !district_id) {
+        return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+      }
+      if (role === 'block_admin' && !block_id) {
+        return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
+      }
 
-            // Helper for simple table counts
-            const getSimpleCount = async (tableName) => {
-                let query = `SELECT COUNT(*) as count FROM ${tableName}`;
-                let queryParams = [];
-                
-                if (filterColumn) {
-                    query += ` WHERE ${filterColumn} = ?`;
-                    queryParams.push(filterValue);
-                }
-                
-                const [rows] = await db.query(query, queryParams);
-                return rows[0]?.count || 0;
-            };
+      // ---------------------------------------------------------
+      // PREPARE DYNAMIC FILTERS
+      // ---------------------------------------------------------
+      let filterColumn = null;
+      let filterValue = null;
 
-            // Helper for User Role counts
-            const getUserRoleCount = async (targetRoleName) => {
-                let query = `
+      if (role === 'department_admin') {
+        filterColumn = 'department_id';
+        filterValue = department_id;
+      } else if (role === 'district_admin') {
+        filterColumn = 'district_id';
+        filterValue = district_id;
+      } else if (role === 'block_admin') {
+        filterColumn = 'block_id';
+        filterValue = block_id;
+      }
+      // If role is superadmin, filterColumn remains null (No filter applied)
+
+      // Helper for simple table counts
+      const getSimpleCount = async (tableName) => {
+        let query = `SELECT COUNT(*) as count FROM ${tableName}`;
+        let queryParams = [];
+
+        if (filterColumn) {
+          query += ` WHERE ${filterColumn} = ?`;
+          queryParams.push(filterValue);
+        }
+
+        const [rows] = await db.query(query, queryParams);
+        return rows[0]?.count || 0;
+      };
+
+      // Helper for User Role counts
+      const getUserRoleCount = async (targetRoleName) => {
+        let query = `
                     SELECT COUNT(u.id) as count 
                     FROM users_customuser u
                     JOIN users_role r ON u.role_id = r.id
                     WHERE r.name = ?
                 `;
-                let queryParams = [targetRoleName];
+        let queryParams = [targetRoleName];
 
-                if (filterColumn) {
-                    query += ` AND u.${filterColumn} = ?`;
-                    queryParams.push(filterValue);
-                }
+        if (filterColumn) {
+          query += ` AND u.${filterColumn} = ?`;
+          queryParams.push(filterValue);
+        }
 
-                const [rows] = await db.query(query, queryParams);
-                return rows[0]?.count || 0;
-            };
+        const [rows] = await db.query(query, queryParams);
+        return rows[0]?.count || 0;
+      };
 
-            // ---------------------------------------------------------
-            // FETCH DATA
-            // ---------------------------------------------------------
-            let data = {};
+      // ---------------------------------------------------------
+      // FETCH DATA
+      // ---------------------------------------------------------
+      let data = {};
 
-            // A. DEPARTMENT ADMIN COUNT (Only Superadmin)
-            if (role === 'superadmin') {
-                data.department_admin_count = await getUserRoleCount('department_admin');
-            }
+      // A. DEPARTMENT ADMIN COUNT (Only Superadmin)
+      if (role === 'superadmin') {
+        data.department_admin_count = await getUserRoleCount('department_admin');
+      }
 
-            // B. DISTRICT ADMIN COUNT (Superadmin & Dept Admin)
-            if (['superadmin', 'department_admin'].includes(role)) {
-                data.district_admin_count = await getUserRoleCount('district_admin');
-            }
+      // B. DISTRICT ADMIN COUNT (Superadmin & Dept Admin)
+      if (['superadmin', 'department_admin'].includes(role)) {
+        data.district_admin_count = await getUserRoleCount('district_admin');
+      }
 
-            // C. BLOCK ADMIN COUNT (Superadmin, Dept Admin, Dist Admin)
-            if (['superadmin', 'department_admin', 'district_admin'].includes(role)) {
-                data.block_admin_count = await getUserRoleCount('block_admin');
-            }
+      // C. BLOCK ADMIN COUNT (Superadmin, Dept Admin, Dist Admin)
+      if (['superadmin', 'department_admin', 'district_admin'].includes(role)) {
+        data.block_admin_count = await getUserRoleCount('block_admin');
+      }
 
-            // D. PRODUCTION CENTER COUNT (Visible to all)
-            if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
-                data.production_centers_count = await getSimpleCount('productioncenter_productioncenter');
-            }
+      // D. PRODUCTION CENTER COUNT (Visible to all)
+      if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
+        data.production_centers_count = await getSimpleCount('productioncenter_productioncenter');
+      }
 
-            // E. FARMER COUNT (Visible to all)
-            if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
-                data.farmers_count = await getSimpleCount('users_farmeraathardetails');
-            }
+      // E. FARMER COUNT (Visible to all)
+      if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
+        data.farmers_count = await getSimpleCount('users_farmeraathardetails');
+      }
 
-            // F. SPECIES IN STOCK COUNT (Visible to all)
-            if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
-                let query = `
+      // F. SPECIES IN STOCK COUNT (Visible to all)
+      if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
+        let query = `
                     SELECT COUNT(DISTINCT ps.species_id) as count 
                     FROM productioncenter_stockdetails ps
                     JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
                 `;
-                let queryParams = [];
+        let queryParams = [];
 
-                if (filterColumn) {
-                    query += ` WHERE pc.${filterColumn} = ?`;
-                    queryParams.push(filterValue);
-                }
-
-                const [specRows] = await db.query(query, queryParams);
-                data.species_in_stock_count = specRows[0]?.count || 0;
-            }
-
-            // ---------------------------------------------------------
-            // SEND SUCCESS RESPONSE
-            // ---------------------------------------------------------
-            res.status(200).json({
-                success: true,
-                data: data
-            });
-
-        } else {
-            // ---------------------------------------------------------
-            // ERROR BLOCK (No Role Found)
-            // ---------------------------------------------------------
-            return res.status(400).json({
-                success: false,
-                error: "User role is required."
-            });
+        if (filterColumn) {
+          query += ` WHERE pc.${filterColumn} = ?`;
+          queryParams.push(filterValue);
         }
 
-    } catch (err) {
-        console.error("❌ Dashboard Count Error:", err);
-        res.status(500).json({ 
-            success: false, 
-            error: "Failed to fetch dashboard counts",
-            details: err.message 
-        });
+        const [specRows] = await db.query(query, queryParams);
+        data.species_in_stock_count = specRows[0]?.count || 0;
+      }
+
+      // ---------------------------------------------------------
+      // SEND SUCCESS RESPONSE
+      // ---------------------------------------------------------
+      res.status(200).json({
+        success: true,
+        data: data
+      });
+
+    } else {
+      // ---------------------------------------------------------
+      // ERROR BLOCK (No Role Found)
+      // ---------------------------------------------------------
+      return res.status(400).json({
+        success: false,
+        error: "User role is required."
+      });
     }
+
+  } catch (err) {
+    console.error("❌ Dashboard Count Error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch dashboard counts",
+      details: err.message
+    });
+  }
 };
 
 exports.getWeeklyFarmerRequestReport = async (req, res) => {
-    try {
-        // 1. Get Date, Role, and Scope Params
-        const { start_date, end_date, role, department_id, district_id, block_id } = req.query;
-        
-        if (!start_date || !end_date) {
-            return res.status(400).json({
-                success: false,
-                error: "start_date and end_date are required"
-            });
-        }
+  try {
+    // 1. Get Date, Role, and Scope Params
+    const { start_date, end_date, role, department_id, district_id, block_id } = req.query;
 
-        // Convert DD/MM/YYYY to YYYY-MM-DD for MySQL
-        const formatDate = (dateStr) => {
-            const [day, month, year] = dateStr.split('/');
-            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        };
+    if (!start_date || !end_date) {
+      return res.status(400).json({
+        success: false,
+        error: "start_date and end_date are required"
+      });
+    }
 
-        const startDate = formatDate(start_date);
-        const endDate = formatDate(end_date);
+    // Convert DD/MM/YYYY to YYYY-MM-DD for MySQL
+    const formatDate = (dateStr) => {
+      const [day, month, year] = dateStr.split('/');
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    };
 
-        // 2. Build Query with Joins and Filters
-        const queryParams = [startDate, `${endDate} 23:59:59`];
-        
-        // Base Query - Join with productioncenter table to check scope
-        let query = `
+    const startDate = formatDate(start_date);
+    const endDate = formatDate(end_date);
+
+    // 2. Build Query with Joins and Filters
+    const queryParams = [startDate, `${endDate} 23:59:59`];
+
+    // Base Query - Join with productioncenter table to check scope
+    let query = `
             SELECT 
                 DATE(fr.created_at) as report_date,
                 COUNT(*) as orders_count,
@@ -2121,56 +2191,56 @@ exports.getWeeklyFarmerRequestReport = async (req, res) => {
             WHERE fr.created_at BETWEEN ? AND ?
         `;
 
-        // Role-based Scope Filtering
-        if (role === 'department_admin' && department_id) {
-            query += ` AND pc.department_id = ?`;
-            queryParams.push(department_id);
-        } else if (role === 'district_admin' && district_id) {
-            query += ` AND pc.district_id = ?`;
-            queryParams.push(district_id);
-        } else if (role === 'block_admin' && block_id) {
-            query += ` AND pc.block_id = ?`;
-            queryParams.push(block_id);
-        }
-        // If role is superadmin or no scope params provided, no extra filter is added (shows all)
-
-        // Grouping and Ordering
-        query += ` GROUP BY DATE(fr.created_at) ORDER BY report_date`;
-
-        // 3. Execute Query
-        const [rows] = await db.query(query, queryParams);
-
-        // 4. Format Response
-        const reportData = rows.map(row => ({
-            date: row.report_date,
-            orders_count: row.orders_count || 0,
-            production_centers_count: row.production_centers_count || 0,
-            pending: row.pending_count || 0,
-            'order-placed': row.order_placed_count || 0,
-            billed: row.billed_count || 0
-        }));
-
-        res.status(200).json({
-            success: true,
-            start_date: start_date,
-            end_date: end_date,
-            data: reportData
-        });
-
-    } catch (err) {
-        console.error("❌ Weekly Report Error:", err);
-        res.status(500).json({ 
-            success: false, 
-            error: "Failed to fetch weekly report",
-            details: err.message 
-        });
+    // Role-based Scope Filtering
+    if (role === 'department_admin' && department_id) {
+      query += ` AND pc.department_id = ?`;
+      queryParams.push(department_id);
+    } else if (role === 'district_admin' && district_id) {
+      query += ` AND pc.district_id = ?`;
+      queryParams.push(district_id);
+    } else if (role === 'block_admin' && block_id) {
+      query += ` AND pc.block_id = ?`;
+      queryParams.push(block_id);
     }
+    // If role is superadmin or no scope params provided, no extra filter is added (shows all)
+
+    // Grouping and Ordering
+    query += ` GROUP BY DATE(fr.created_at) ORDER BY report_date`;
+
+    // 3. Execute Query
+    const [rows] = await db.query(query, queryParams);
+
+    // 4. Format Response
+    const reportData = rows.map(row => ({
+      date: row.report_date,
+      orders_count: row.orders_count || 0,
+      production_centers_count: row.production_centers_count || 0,
+      pending: row.pending_count || 0,
+      'order-placed': row.order_placed_count || 0,
+      billed: row.billed_count || 0
+    }));
+
+    res.status(200).json({
+      success: true,
+      start_date: start_date,
+      end_date: end_date,
+      data: reportData
+    });
+
+  } catch (err) {
+    console.error("❌ Weekly Report Error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch weekly report",
+      details: err.message
+    });
+  }
 };
 
 // exports.getProductionCentersList = async (req, res) => {
 //     try {
 //         console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
-        
+
 //         // 1. Get user info for filtering
 //         const { role, district_id, block_id } = req.user;
 //         console.log("🔐 User Role:", role);
@@ -2232,17 +2302,17 @@ exports.getWeeklyFarmerRequestReport = async (req, res) => {
 //     }
 // };
 exports.getProductionCentersList = async (req, res) => {
-    try {
-        console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
+  try {
+    console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
 
-        // 1. Get user info for filtering
-        const { role, district_id, block_id } = req.user;
-        console.log("🔐 User Role:", role);
+    // 1. Get user info for filtering
+    const { role, district_id, block_id } = req.user;
+    console.log("🔐 User Role:", role);
 
-        // 2. Construct Query
-        // We select center details and SUM the saplings_available from the stock table.
-        // LEFT JOIN ensures we show centers even if they have 0 stock.
-        let query = `
+    // 2. Construct Query
+    // We select center details and SUM the saplings_available from the stock table.
+    // LEFT JOIN ensures we show centers even if they have 0 stock.
+    let query = `
           SELECT
               pc.id,
               pc.name_of_production_centre,
@@ -2259,89 +2329,89 @@ exports.getProductionCentersList = async (req, res) => {
           LEFT JOIN master_district md ON pc.district_id = md.id
         `;
 
-        const params = [];
+    const params = [];
 
-        // 3. Apply Role-Based Filters
-        // These columns exist in the 'productioncenter_productioncenter' table
-        if (role === 'district_admin' && district_id) {
-            query += ` WHERE pc.district_id =?`;
-            params.push(district_id);
-        } else if (role === 'block_admin' && block_id) {
-            query += ` WHERE pc.block_id =?`;
-            params.push(block_id);
-        }
-        // Note: Superadmin or Department Admin gets no filter (sees all)
-
-        // 4. Group By is required for the SUM() function to work per center
-        query += ` GROUP BY pc.id, pc.latitude, pc.longitude`; // Added latitude and longitude to GROUP BY
-
-        console.log("📝 SQL:", query);
-        console.log("📦 Params:", params);
-
-        // 5. Execute
-        const [rows] = await db.query(query, params);
-
-        console.log(`✅ Found ${rows.length} production centers.`);
-
-        res.status(200).json({
-            success: true,
-            data: rows
-        });
-
-    } catch (err) {
-        console.error("❌ Production Centers List Error:", err);
-        res.status(500).json({
-            success: false,
-            error: "Failed to fetch production centers",
-            details: err.message
-        });
+    // 3. Apply Role-Based Filters
+    // These columns exist in the 'productioncenter_productioncenter' table
+    if (role === 'district_admin' && district_id) {
+      query += ` WHERE pc.district_id =?`;
+      params.push(district_id);
+    } else if (role === 'block_admin' && block_id) {
+      query += ` WHERE pc.block_id =?`;
+      params.push(block_id);
     }
+    // Note: Superadmin or Department Admin gets no filter (sees all)
+
+    // 4. Group By is required for the SUM() function to work per center
+    query += ` GROUP BY pc.id, pc.latitude, pc.longitude`; // Added latitude and longitude to GROUP BY
+
+    console.log("📝 SQL:", query);
+    console.log("📦 Params:", params);
+
+    // 5. Execute
+    const [rows] = await db.query(query, params);
+
+    console.log(`✅ Found ${rows.length} production centers.`);
+
+    res.status(200).json({
+      success: true,
+      data: rows
+    });
+
+  } catch (err) {
+    console.error("❌ Production Centers List Error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch production centers",
+      details: err.message
+    });
+  }
 };
 
 exports.getTargetDetails = async (req, res) => {
-    try {
-        // 1. Get Data from Token & Query Params
-        const user = req.user || {};
-        
-        const role = req.query.role || user.role;
-        const target_level = req.query.target_level; // department, district, block, productioncenter
-        
-        const department_id = req.query.department_id || user.department_id;
-        const district_id = req.query.district_id || user.district_id;
-        const block_id = req.query.block_id || user.block_id;
+  try {
+    // 1. Get Data from Token & Query Params
+    const user = req.user || {};
 
-        // ---------------------------------------------------------
-        // 1. VALIDATION
-        // ---------------------------------------------------------
-        if (!target_level) {
-            return res.status(400).json({ success: false, error: "Query param 'target_level' is required." });
-        }
+    const role = req.query.role || user.role;
+    const target_level = req.query.target_level; // department, district, block, productioncenter
 
-        // Strict Role Checks (Ensure ID exists for the role)
-        if (role === 'department_admin' && !department_id) {
-            return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
-        }
-        if (role === 'district_admin' && !district_id) {
-            return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
-        }
-        if (role === 'block_admin' && !block_id) {
-            return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
-        }
+    const department_id = req.query.department_id || user.department_id;
+    const district_id = req.query.district_id || user.district_id;
+    const block_id = req.query.block_id || user.block_id;
 
-        // ---------------------------------------------------------
-        // 2. PREPARE QUERY VARIABLES
-        // ---------------------------------------------------------
-        let query = "";
-        let queryParams = [];
-        let whereClauses = []; // Collects WHERE conditions
+    // ---------------------------------------------------------
+    // 1. VALIDATION
+    // ---------------------------------------------------------
+    if (!target_level) {
+      return res.status(400).json({ success: false, error: "Query param 'target_level' is required." });
+    }
 
-        // ---------------------------------------------------------
-        // 3. DYNAMIC QUERY BUILDER
-        // ---------------------------------------------------------
+    // Strict Role Checks (Ensure ID exists for the role)
+    if (role === 'department_admin' && !department_id) {
+      return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+    }
+    if (role === 'district_admin' && !district_id) {
+      return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+    }
+    if (role === 'block_admin' && !block_id) {
+      return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
+    }
 
-        // A. TARGET LEVEL: DEPARTMENT
-        if (target_level === 'department') {
-            query = `
+    // ---------------------------------------------------------
+    // 2. PREPARE QUERY VARIABLES
+    // ---------------------------------------------------------
+    let query = "";
+    let queryParams = [];
+    let whereClauses = []; // Collects WHERE conditions
+
+    // ---------------------------------------------------------
+    // 3. DYNAMIC QUERY BUILDER
+    // ---------------------------------------------------------
+
+    // A. TARGET LEVEL: DEPARTMENT
+    if (target_level === 'department') {
+      query = `
                 SELECT 
                     td.id,
                     td.target_tag,
@@ -2356,18 +2426,18 @@ exports.getTargetDetails = async (req, res) => {
                 LEFT JOIN users_customuser u ON td.created_by = u.id
             `;
 
-            // Filter Logic for Department Table
-            if (role === 'department_admin') {
-                whereClauses.push("td.department_id = ?");
-                queryParams.push(department_id);
-            }
-            // Superadmin sees all (No filter)
+      // Filter Logic for Department Table
+      if (role === 'department_admin') {
+        whereClauses.push("td.department_id = ?");
+        queryParams.push(department_id);
+      }
+      // Superadmin sees all (No filter)
 
-        } 
-        
-        // B. TARGET LEVEL: DISTRICT
-        else if (target_level === 'district') {
-            query = `
+    }
+
+    // B. TARGET LEVEL: DISTRICT
+    else if (target_level === 'district') {
+      query = `
                 SELECT 
                     tdis.id,
                     tdis.target_quantity,
@@ -2382,21 +2452,21 @@ exports.getTargetDetails = async (req, res) => {
                 LEFT JOIN users_customuser u ON tdis.created_by = u.id
             `;
 
-            // Filter Logic for District Table
-            if (role === 'department_admin') {
-                // As requested: Filter by department_id column in this table
-                whereClauses.push("tdis.target_department_id = ?");
-                queryParams.push(department_id);
-            } else if (role === 'district_admin') {
-                whereClauses.push("tdis.district_id = ?");
-                queryParams.push(district_id);
-            }
+      // Filter Logic for District Table
+      if (role === 'department_admin') {
+        // As requested: Filter by department_id column in this table
+        whereClauses.push("tdis.target_department_id = ?");
+        queryParams.push(department_id);
+      } else if (role === 'district_admin') {
+        whereClauses.push("tdis.district_id = ?");
+        queryParams.push(district_id);
+      }
 
-        } 
-        
-        // C. TARGET LEVEL: BLOCK
-        else if (target_level === 'block') {
-            query = `
+    }
+
+    // C. TARGET LEVEL: BLOCK
+    else if (target_level === 'block') {
+      query = `
                 SELECT 
                     tb.id,
                     tb.target_quantity,
@@ -2410,24 +2480,24 @@ exports.getTargetDetails = async (req, res) => {
                 LEFT JOIN users_customuser u ON tb.created_by = u.id
             `;
 
-            // Filter Logic for Block Table
-            if (role === 'department_admin') {
-                // Filter by department_id column in this table
-                whereClauses.push("tb.target_department_id = ?");
-                queryParams.push(department_id);
-            } else if (role === 'district_admin') {
-                whereClauses.push("tb.district_id = ?");
-                queryParams.push(district_id);
-            } else if (role === 'block_admin') {
-                whereClauses.push("tb.block_id = ?");
-                queryParams.push(block_id);
-            }
+      // Filter Logic for Block Table
+      if (role === 'department_admin') {
+        // Filter by department_id column in this table
+        whereClauses.push("tb.target_department_id = ?");
+        queryParams.push(department_id);
+      } else if (role === 'district_admin') {
+        whereClauses.push("tb.district_id = ?");
+        queryParams.push(district_id);
+      } else if (role === 'block_admin') {
+        whereClauses.push("tb.block_id = ?");
+        queryParams.push(block_id);
+      }
 
-        } 
-        
-        // D. TARGET LEVEL: PRODUCTION CENTER
-        else if (target_level === 'productioncenter') {
-            query = `
+    }
+
+    // D. TARGET LEVEL: PRODUCTION CENTER
+    else if (target_level === 'productioncenter') {
+      query = `
                 SELECT 
                     tpc.id,
                     tpc.target_quantity,
@@ -2441,79 +2511,79 @@ exports.getTargetDetails = async (req, res) => {
                 LEFT JOIN users_customuser u ON tpc.created_by = u.id
             `;
 
-            // Filter Logic for Production Center Table
-            if (role === 'department_admin') {
-                // Filter by department_id column in this table
-                whereClauses.push("tpc.target_department_id = ?");
-                queryParams.push(department_id);
-            } else if (role === 'district_admin') {
-                whereClauses.push("tpc.district_id = ?");
-                queryParams.push(district_id);
-            } else if (role === 'block_admin') {
-                whereClauses.push("tpc.block_id = ?");
-                queryParams.push(block_id);
-            }
+      // Filter Logic for Production Center Table
+      if (role === 'department_admin') {
+        // Filter by department_id column in this table
+        whereClauses.push("tpc.target_department_id = ?");
+        queryParams.push(department_id);
+      } else if (role === 'district_admin') {
+        whereClauses.push("tpc.district_id = ?");
+        queryParams.push(district_id);
+      } else if (role === 'block_admin') {
+        whereClauses.push("tpc.block_id = ?");
+        queryParams.push(block_id);
+      }
 
-        } else {
-            return res.status(400).json({ success: false, error: "Invalid target_level provided." });
-        }
-
-        // ---------------------------------------------------------
-        // 4. FINALIZE QUERY (Append WHERE clauses)
-        // ---------------------------------------------------------
-        if (whereClauses.length > 0) {
-            query += " WHERE " + whereClauses.join(" AND ");
-        }
-
-        // Execute
-        const [rows] = await db.query(query, queryParams);
-
-        res.status(200).json({
-            success: true,
-            count: rows.length,
-            data: rows
-        });
-
-    } catch (err) {
-        console.error("❌ Target Details Error:", err);
-        res.status(500).json({ success: false, error: "Server Error", details: err.message });
+    } else {
+      return res.status(400).json({ success: false, error: "Invalid target_level provided." });
     }
+
+    // ---------------------------------------------------------
+    // 4. FINALIZE QUERY (Append WHERE clauses)
+    // ---------------------------------------------------------
+    if (whereClauses.length > 0) {
+      query += " WHERE " + whereClauses.join(" AND ");
+    }
+
+    // Execute
+    const [rows] = await db.query(query, queryParams);
+
+    res.status(200).json({
+      success: true,
+      count: rows.length,
+      data: rows
+    });
+
+  } catch (err) {
+    console.error("❌ Target Details Error:", err);
+    res.status(500).json({ success: false, error: "Server Error", details: err.message });
+  }
 };
 
 exports.getFarmerDetails = async (req, res) => {
-    try {
-        // 1. Get Data from Token & Query Params
-        const user = req.user || {};
-        
-        const role = req.query.role || user.role;
-        
-        // IDs can come from query params (for filtering) or the logged-in user's context
-        const department_id = req.query.department_id || user.department_id;
-        const district_id = req.query.district_id || user.district_id;
-        const block_id = req.query.block_id || user.block_id;
+  try {
+    // 1. Get Data from Token & Query Params
+    const user = req.user || {};
 
-        // ---------------------------------------------------------
-        // 2. VALIDATION
-        // ---------------------------------------------------------
-        
-        // Validate required IDs based on role
-        if (role === 'department_admin' && !department_id) {
-            return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
-        }
-        if (role === 'district_admin' && !district_id) {
-            return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
-        }
-        if (role === 'block_admin' && !block_id) {
-            return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
-        }
+    const role = req.query.role || user.role;
 
-        // ---------------------------------------------------------
-        // 3. PREPARE QUERY VARIABLES
-        // ---------------------------------------------------------
-        
-        // Selecting the required fields: farmerID, district name, block name, village name
-        // Added basic farmer details (name, type) for context
-        let query = `
+    // IDs can come from query params (for filtering) or the logged-in user's context
+    const department_id = req.query.department_id || user.department_id;
+    const district_id = req.query.district_id || user.district_id;
+    const block_id = req.query.block_id || user.block_id;
+
+    // ---------------------------------------------------------
+    // 2. VALIDATION
+    // ---------------------------------------------------------
+
+    // Validate required IDs based on role
+    if (role === 'department_admin' && !department_id) {
+      return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+    }
+    if (role === 'district_admin' && !district_id) {
+      return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+    }
+    if (role === 'block_admin' && !block_id) {
+      return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
+    }
+
+    // ---------------------------------------------------------
+    // 3. PREPARE QUERY VARIABLES
+    // ---------------------------------------------------------
+
+    // Selecting the required fields: farmerID, district name, block name, village name
+    // Added basic farmer details (name, type) for context
+    let query = `
             SELECT 
                 f.id,
                 f.farmer_id,
@@ -2528,60 +2598,60 @@ exports.getFarmerDetails = async (req, res) => {
             LEFT JOIN master_village mv ON f.village_id = mv.id
         `;
 
-        let whereClauses = [];
-        let queryParams = [];
+    let whereClauses = [];
+    let queryParams = [];
 
-        // ---------------------------------------------------------
-        // 4. DYNAMIC QUERY BUILDER (Role-Based Filtering)
-        // ---------------------------------------------------------
+    // ---------------------------------------------------------
+    // 4. DYNAMIC QUERY BUILDER (Role-Based Filtering)
+    // ---------------------------------------------------------
 
-        if (role === 'superadmin') {
-            // Superadmin: Show all data (No WHERE clauses needed)
-        } 
-        else if (role === 'department_admin') {
-            // Department Admin: Filter by department_id column in farmers table (Column 21)
-            whereClauses.push("f.department_id = ?");
-            queryParams.push(department_id);
-        } 
-        else if (role === 'district_admin') {
-            // District Admin: Filter by district_id
-            whereClauses.push("f.district_id = ?");
-            queryParams.push(district_id);
-        } 
-        else if (role === 'block_admin') {
-            // Block Admin: Filter by block_id
-            whereClauses.push("f.block_id = ?");
-            queryParams.push(block_id);
-        } 
-        else {
-            // Optional: Handle unknown roles or default behavior
-            // For now, returning empty if role is not recognized or unauthorized
-            return res.status(403).json({ success: false, error: "Unauthorized role access." });
-        }
-
-        // Append WHERE clauses if any exist
-        if (whereClauses.length > 0) {
-            query += " WHERE " + whereClauses.join(" AND ");
-        }
-
-        // Sort by latest entry
-        query += " ORDER BY f.id DESC";
-
-        // ---------------------------------------------------------
-        // 5. EXECUTE QUERY
-        // ---------------------------------------------------------
-        const [rows] = await db.query(query, queryParams);
-
-        res.status(200).json({
-            success: true,
-            count: rows.length,
-            data: rows
-        });
-
-    } catch (err) {
-        console.error("❌ Farmer Details Error:", err);
-        res.status(500).json({ success: false, error: "Server Error", details: err.message });
+    if (role === 'superadmin') {
+      // Superadmin: Show all data (No WHERE clauses needed)
     }
+    else if (role === 'department_admin') {
+      // Department Admin: Filter by department_id column in farmers table (Column 21)
+      whereClauses.push("f.department_id = ?");
+      queryParams.push(department_id);
+    }
+    else if (role === 'district_admin') {
+      // District Admin: Filter by district_id
+      whereClauses.push("f.district_id = ?");
+      queryParams.push(district_id);
+    }
+    else if (role === 'block_admin') {
+      // Block Admin: Filter by block_id
+      whereClauses.push("f.block_id = ?");
+      queryParams.push(block_id);
+    }
+    else {
+      // Optional: Handle unknown roles or default behavior
+      // For now, returning empty if role is not recognized or unauthorized
+      return res.status(403).json({ success: false, error: "Unauthorized role access." });
+    }
+
+    // Append WHERE clauses if any exist
+    if (whereClauses.length > 0) {
+      query += " WHERE " + whereClauses.join(" AND ");
+    }
+
+    // Sort by latest entry
+    query += " ORDER BY f.id DESC";
+
+    // ---------------------------------------------------------
+    // 5. EXECUTE QUERY
+    // ---------------------------------------------------------
+    const [rows] = await db.query(query, queryParams);
+
+    res.status(200).json({
+      success: true,
+      count: rows.length,
+      data: rows
+    });
+
+  } catch (err) {
+    console.error("❌ Farmer Details Error:", err);
+    res.status(500).json({ success: false, error: "Server Error", details: err.message });
+  }
 };
 
 
@@ -2637,7 +2707,8 @@ exports.getProductionCenterSaplings = async (req, res) => {
         ps.species_id,
         t.name,
         ps.saplings_available,
-        ps.sapling_age
+        ps.sapling_age,
+        ps.total_selled
       FROM productioncenter_stockdetails ps
       LEFT JOIN tbl_agroforest_trees t
         ON ps.species_id = t.id
@@ -2704,7 +2775,7 @@ exports.createProductionCenter = async (req, res) => {
     if (!name || !mobile || !email) {
       return res.status(400).json({ error: "All fields are required." });
     }
-    
+
 
     const insertQuery = `
       INSERT INTO users_customuser 
@@ -2716,20 +2787,20 @@ exports.createProductionCenter = async (req, res) => {
       name,
       mobile,
       email,
-      2  
+      2
     ]);
 
-    res.status(201).json({ 
-      message: "Registration successful! Please login with OTP." 
+    res.status(201).json({
+      message: "Registration successful! Please login with OTP."
     });
 
   } catch (err) {
     console.error("PC Registration Error:", err);
-    
+
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({ error: 'This mobile number or email is already registered.' });
     }
-    
+
     res.status(500).json({ error: err.message });
   }
 };
@@ -2808,8 +2879,8 @@ exports.generateBillPdf = async (req, res) => {
       for (const p of paths) {
         if (fs.existsSync(p)) {
           doc.save().opacity(0.15)
-             .image(p, (pw - 220) / 2, (ph - 220) / 2, { width: 220, height: 220 })
-             .restore();
+            .image(p, (pw - 220) / 2, (ph - 220) / 2, { width: 220, height: 220 })
+            .restore();
           break;
         }
       }
@@ -2821,13 +2892,13 @@ exports.generateBillPdf = async (req, res) => {
     doc.moveTo(c, y).lineTo(c + cw, y).strokeColor('#2e7d32').lineWidth(2).stroke();
     y += 15;
     doc.fillColor('#000000').fontSize(18).font('Helvetica-Bold')
-       .text(order.pc_name || "Production Center", c, y, { width: cw, align: 'center' });
+      .text(order.pc_name || "Production Center", c, y, { width: cw, align: 'center' });
     y = doc.y + 4;
     doc.fillColor('#555').fontSize(9).font('Helvetica')
-       .text(order.pc_address || "", c, y, { width: cw, align: 'center' });
+      .text(order.pc_address || "", c, y, { width: cw, align: 'center' });
     y = doc.y + 12;
     doc.fillColor('#1b5e20').fontSize(11).font('Helvetica-Bold')
-       .text("TAX INVOICE / BILL", c, y, { width: cw, align: 'center' });
+      .text("TAX INVOICE / BILL", c, y, { width: cw, align: 'center' });
     y = doc.y + 5;
     doc.moveTo(c, y).lineTo(c + cw, y).strokeColor('#2e7d32').lineWidth(2).stroke();
     y += 15;
@@ -2865,7 +2936,7 @@ exports.generateBillPdf = async (req, res) => {
     let tx = c;
     headers.forEach((h, i) => {
       doc.fillColor('#fff').fontSize(7.5).font('Helvetica-Bold')
-         .text(h, tx + 3, y + 6, { width: colW[i] - 6, align: 'center' });
+        .text(h, tx + 3, y + 6, { width: colW[i] - 6, align: 'center' });
       tx += colW[i];
     });
     y += hh;
@@ -2897,7 +2968,7 @@ exports.generateBillPdf = async (req, res) => {
       row.forEach((cell, i) => {
         const align = i === 1 ? 'left' : 'center';  // Species left-aligned
         doc.fillColor('#333').fontSize(7.5).font('Helvetica')
-           .text(cell, tx + 3, y + 4, { width: colW[i] - 6, align });
+          .text(cell, tx + 3, y + 4, { width: colW[i] - 6, align });
         tx += colW[i];
       });
       y += rh;
@@ -2911,9 +2982,9 @@ exports.generateBillPdf = async (req, res) => {
     const lblW = 120, valW = 70;
 
     doc.fillColor('#333').fontSize(9).font('Helvetica')
-       .text("Grand Total:", txStart, y, { width: lblW, align: 'right' });
+      .text("Grand Total:", txStart, y, { width: lblW, align: 'right' });
     doc.fillColor('#1b5e20').fontSize(11).font('Helvetica-Bold')
-       .text(`${grandTotal.toFixed(2)}`, txStart + lblW, y, { width: valW, align: 'right' });
+      .text(`${grandTotal.toFixed(2)}`, txStart + lblW, y, { width: valW, align: 'right' });
     y += 30;
 
     doc.end();

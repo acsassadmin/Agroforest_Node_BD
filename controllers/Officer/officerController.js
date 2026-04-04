@@ -151,26 +151,27 @@ exports.registerOfficer = async (req, res) => {
 
         const {
             officername, gender, mobile, email, department, designation,
-            role, username, password, district_id, block_id,
+            role, district_id, block_id,
             created_by, created_at // <--- New Fields
         } = req.body;
 
-        if (!username || !password || !email || !officername) {
+        console.log("mobile " , mobile)
+        if ( !email || !officername) {
             await connection.rollback();
             return res.status(400).json({ message: "Missing required fields" });
         }
 
         // Check existing user
         const [existingUser] = await connection.query(
-            'SELECT id FROM users_customuser WHERE email = ? OR username = ?',
-            [email, username]
+            'SELECT id FROM users_customuser WHERE email = ?',
+            [email]
         );
         if (existingUser.length > 0) {
             await connection.rollback();
             return res.status(400).json({ message: "User already exists" });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        
 
         // Find Role ID
         let roleId = null;
@@ -187,12 +188,12 @@ exports.registerOfficer = async (req, res) => {
         // 1. Insert into users_customuser
         const insertUserQuery = `
             INSERT INTO users_customuser 
-            (username, password, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            (username, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id , phone) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? , ?)`;
         
         const [userResult] = await connection.query(insertUserQuery, [
-            username, hashedPassword, email, roleId, true, new Date(), false, username, null,
-            department, district_id, block_id
+            officername, email, roleId, true, new Date(), false, officername, null,
+            department, district_id, block_id , mobile
         ]);
 
         const userId = userResult.insertId;

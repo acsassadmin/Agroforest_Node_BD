@@ -86,26 +86,51 @@ exports.createTargetDistrict = async (req, res) => {
 
 exports.getAllTargetDistricts = async (req, res) => {
     try {
-        const userId = req.user.id;
+        // 1. Get user_id from query params
+        const userId = req.query.user_id;
 
-        // 1. Get User's Department ID from the users table
+        if (!userId) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "user_id query parameter is required" 
+            });
+        }
+
+        // 2. Get User's Role ID, Department ID, and District ID
         const [userRow] = await db.query(
-            `SELECT department_id FROM users_customuser WHERE id = ?`, 
+            `SELECT role_id, department_id, district_id FROM users_customuser WHERE id = ?`, 
             [userId]
         );
 
         if (userRow.length === 0) {
-            return res.status(404).json({ message: "User not found" });
+            return res.status(404).json({ success: false, message: "User not found" });
         }
 
-        const uDeptId = userRow[0].department_id;
+        const { role_id, department_id: uDeptId, district_id: uDistId } = userRow[0];
 
-        // 2. Fetch Department Limits
-        // We query the 'target_department' table to see what total targets are assigned to this department.
-        // We use SUM() because there might be multiple rows for the same department (e.g., split by year or scheme).
+        // 3. Get Role Name from users_role table
+        const [roleRow] = await db.query(
+            `SELECT name FROM users_role WHERE id = ?`, 
+            [role_id]
+        );
+
+        if (roleRow.length === 0) {
+            return res.status(404).json({ success: false, message: "User role not found" });
+        }
+
+        const userRole = roleRow[0].name;
+
+        // 4. Fetch Department Limits (Only applicable for department_admin)
         let deptLimits = { scheme_limit: 0, non_scheme_limit: 0 };
         
-        if (uDeptId) {
+        if (userRole === 'department_admin') {
+            if (!uDeptId) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: "Department admin must have a department assigned" 
+                });
+            }
+
             const [limitRows] = await db.query(
                 `SELECT scheme_type, SUM(target_quantity) as total_assigned
                  FROM target_department 
@@ -114,7 +139,6 @@ exports.getAllTargetDistricts = async (req, res) => {
                 [uDeptId]
             );
 
-            // Map the results to our limit object
             if (limitRows && limitRows.length > 0) {
                 limitRows.forEach(row => {
                     const val = Number(row.total_assigned || 0);
@@ -127,33 +151,54 @@ exports.getAllTargetDistricts = async (req, res) => {
             }
         }
 
-        // 3. Fetch Existing District Targets (Allocations)
-        // This data is used by the frontend to calculate "Used" amounts per year.
-       const dataQuery = `
-    SELECT 
-        td.*, 
-        d.name AS department_name,
-        md.District_Name AS district_name,
-        uc.username AS created_by_name, 
-        s.name AS scheme_name
-    FROM target_district td
-    INNER JOIN master_district md ON td.district_id = md.id
-    LEFT JOIN department d ON td.target_department_id = d.id 
-    LEFT JOIN users_customuser uc ON td.created_by = uc.id
-    -- ✅ UPDATE JOIN: Ensure explicit comparison to handle type mismatches
-    LEFT JOIN tn_schema s ON CAST(td.scheme_id AS CHAR) = CAST(s.id AS CHAR)
-    WHERE td.target_department_id = ?
-    ORDER BY td.start_date DESC
-`;
+        // 5. Build Dynamic WHERE clause for District Targets
+        let whereClause = 'WHERE 1=1';
+        let queryParams = [];
 
-        const [rows] = await db.query(dataQuery, [uDeptId]);
+        if (userRole === 'department_admin') {
+            whereClause += ' AND td.target_department_id = ?';
+            queryParams.push(uDeptId);
+        } 
+        else if (userRole === 'district_admin') {
+            if (!uDistId) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: "District admin must have a district assigned" 
+                });
+            }
+            whereClause += ' AND td.district_id = ?';
+            queryParams.push(uDistId);
+        }
+        // If 'superadmin', whereClause remains 'WHERE 1=1' (shows everything)
 
-        // 4. Construct Final Response
+        // 6. Fetch Existing District Targets
+        const dataQuery = `
+            SELECT 
+                td.*, 
+                d.name AS department_name,
+                md.District_Name AS district_name,
+                uc.username AS created_by_name, 
+                s.name AS scheme_name
+            FROM target_district td
+            INNER JOIN master_district md ON td.district_id = md.id
+            LEFT JOIN department d ON td.target_department_id = d.id 
+            LEFT JOIN users_customuser uc ON td.created_by = uc.id
+            LEFT JOIN tn_schema s ON CAST(td.scheme_id AS CHAR) = CAST(s.id AS CHAR)
+            ${whereClause}
+            ORDER BY td.id DESC
+        `;
+
+        const [rows] = await db.query(dataQuery, queryParams);
+
+        // 7. Construct Final Response
         res.status(200).json({
             success: true,
-            data: rows || [],           // List of all district targets
-            meta: deptLimits,           // { scheme_limit: 2000, non_scheme_limit: 1000 }
-            user_dept_id: uDeptId
+            data: rows || [],
+            meta: deptLimits, // Will be {0,0} for superadmin/district_admin, populated for dept_admin
+            user_role: userRole,
+            filtered_by: userRole === 'superadmin' ? 'all' : 
+                         userRole === 'department_admin' ? `department_${uDeptId}` : 
+                         `district_${uDistId}`
         });
 
     } catch (err) {
@@ -165,6 +210,8 @@ exports.getAllTargetDistricts = async (req, res) => {
         });
     }
 };
+
+
 // ===================== GET TARGET DISTRICT BY ID =====================
 exports.getTargetDistrictById = async (req, res) => {
     try {

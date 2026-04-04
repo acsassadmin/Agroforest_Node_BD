@@ -57,32 +57,73 @@ exports.createTargetProductionCenter = async (req, res) => {
 // ===================== GET ALL =====================
 exports.getAllTargetProductionCenters = async (req, res) => {
     try {
-        const userId = req.user.id;
+        // Get user_id from query params
+        const userId = req.query.user_id;
 
-        // 1. Fetch User Info to determine permissions
+        if (!userId) {
+            return res.status(400).json({ message: "user_id is required in query params" });
+        }
+
+        // 1. Fetch User Info to determine role and permissions
         const [userRow] = await db.query(
-            `SELECT u.district_id, u.block_id, d.District_Name, b.Block_Name, u.is_superuser 
+            `SELECT u.id, u.district_id, u.block_id, u.department_id, ur.name AS role_name, 
+                    d.District_Name, b.Block_Name, dept.name AS department_name, u.is_superuser 
              FROM users_customuser u 
              LEFT JOIN master_district d ON u.district_id = d.id 
              LEFT JOIN master_block b ON u.block_id = b.id
+             LEFT JOIN department dept ON u.department_id = dept.id
+             LEFT JOIN users_role ur ON u.role_id = ur.id
              WHERE u.id = ?`, 
             [userId]
         );
         
-        if (userRow.length === 0) return res.status(404).json({ message: "User not found" });
+        if (userRow.length === 0) {
+            return res.status(404).json({ message: "User not found" });
+        }
         
-        const { district_id, block_id, District_Name, Block_Name, is_superuser } = userRow[0];
+        const { 
+            id: fetchedUserId, 
+            district_id, 
+            block_id, 
+            department_id, 
+            role_name, 
+            District_Name, 
+            Block_Name, 
+            department_name, 
+            is_superuser 
+        } = userRow[0];
 
         // 2. Setup Pagination
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
 
-        // 3. Build Filter (Superusers see EVERYTHING, others see their own Block/District)
+        // 3. Build Filter based on Role
         let conditions = [];
         let params = [];
 
-        if (!is_superuser) {
+        // Role-based filtering logic
+        if (role_name === 'superadmin' || is_superuser) {
+            // Superadmin sees EVERYTHING - no conditions added
+        } else if (role_name === 'department_admin') {
+            if (department_id) {
+                conditions.push("tpc.target_department_id = ?");
+                params.push(department_id);
+            }
+        } else if (role_name === 'district_admin') {
+            // District admin sees only their district data
+            if (district_id) {
+                conditions.push("tpc.district_id = ?");
+                params.push(district_id);
+            }
+        } else if (role_name === 'block_admin') {
+            // Block admin sees only their block data
+            if (block_id) {
+                conditions.push("tpc.block_id = ?");
+                params.push(block_id);
+            }
+        } else {
+            // For any other role, default to their block/district if available
             if (block_id) {
                 conditions.push("tpc.block_id = ?");
                 params.push(block_id);
@@ -94,19 +135,21 @@ exports.getAllTargetProductionCenters = async (req, res) => {
 
         let whereClause = conditions.length > 0 ? " WHERE " + conditions.join(" AND ") : "";
 
-        // 4. Main Query (Note the LEFT JOIN on productioncenter_productioncenter)
+        // 4. Main Query
         let dataQuery = `
             SELECT 
                 tpc.*, 
                 md.District_Name AS district_name, 
                 blk.Block_Name AS block_name,
                 pc.name_of_production_centre AS productioncenter_name,
-                s.name AS scheme_name
+                s.name AS scheme_name,
+                dept.name AS department_name
             FROM target_productioncenter tpc
             LEFT JOIN master_district md ON tpc.district_id = md.id
             LEFT JOIN master_block blk ON tpc.block_id = blk.id
             LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
             LEFT JOIN tn_schema s ON tpc.scheme_id = s.id
+            LEFT JOIN department dept ON tpc.target_department_id = dept.id
             ${whereClause}
             ORDER BY tpc.id DESC 
             LIMIT ? OFFSET ?
@@ -115,34 +158,65 @@ exports.getAllTargetProductionCenters = async (req, res) => {
         const [rows] = await db.query(dataQuery, [...params, limit, offset]);
         
         // 5. Get Total for pagination
-        const [countRows] = await db.query(`SELECT COUNT(*) as total FROM target_productioncenter tpc ${whereClause}`, params);
+        const [countRows] = await db.query(
+            `SELECT COUNT(*) as total FROM target_productioncenter tpc ${whereClause}`, 
+            params
+        );
         const total = countRows[0].total;
 
-        // 6. Fetch Block Allocations (Pool logic)
-       // 6. Fetch Block Allocations (Pool logic) - UPDATED
-let blockAllocations = [];
-if (block_id) {
-    const [allocRes] = await db.query(
-        `SELECT 
-            tb.id, 
-            tb.scheme_type, 
-            tb.scheme_id, 
-            tb.target_quantity,
-            s.name as scheme_name
-         FROM target_block tb
-         LEFT JOIN tn_schema s ON tb.scheme_id = s.id
-         WHERE tb.block_id = ?`, 
-        [block_id]
-    );
-    blockAllocations = allocRes;
-}
+        // 6. Fetch Block Allocations (Pool logic) - Only for block_admin
+        let blockAllocations = [];
+        if (role_name === 'block_admin' && block_id) {
+            const [allocRes] = await db.query(
+                `SELECT 
+                    tb.id, 
+                    tb.scheme_type, 
+                    tb.scheme_id, 
+                    tb.target_quantity,
+                    s.name as scheme_name
+                 FROM target_block tb
+                 LEFT JOIN tn_schema s ON tb.scheme_id = s.id
+                 WHERE tb.block_id = ?`, 
+                [block_id]
+            );
+            blockAllocations = allocRes;
+        }
 
+        // 7. Determine display names based on role
+        let user_district_name = "All Districts";
+        let user_block_name = "All Blocks";
+        let user_department_name = "All Departments";
+
+        if (role_name === 'superadmin' || is_superuser) {
+            user_district_name = "All Districts";
+            user_block_name = "All Blocks";
+            user_department_name = "All Departments";
+        } else if (role_name === 'department_admin') {
+            user_department_name = department_name || "N/A";
+        } else if (role_name === 'district_admin') {
+            user_district_name = District_Name || "N/A";
+        } else if (role_name === 'block_admin') {
+            user_district_name = District_Name || "N/A";
+            user_block_name = Block_Name || "N/A";
+        }
+
+        // 8. Return Response
         res.status(200).json({
+            user_id: fetchedUserId,
+            user_role: role_name,
             data: rows,
-            pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+            pagination: { 
+                total, 
+                page, 
+                limit, 
+                totalPages: Math.ceil(total / limit) 
+            },
             block_allocations: blockAllocations,
-            user_district_name: District_Name || "All Districts",
-            user_block_name: Block_Name || "All Blocks"
+            user_info: {
+                user_district_name,
+                user_block_name,
+                user_department_name
+            }
         });
 
     } catch (err) {
@@ -150,6 +224,8 @@ if (block_id) {
         res.status(500).json({ error: err.message });
     }
 };
+
+
 // ===================== GET PRODUCTION CENTERS BY BLOCK =====================
 exports.getProductionCentersByBlock = async (req, res) => {
     try {

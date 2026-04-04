@@ -24,6 +24,8 @@ router.get('/production-centers-nearby/', authenticateToken, prodController.getN
 router.get('/district-summary/',  prodController.getDistrictSummary);
 router.get('/blocksummary/', prodController.getBlockSummary);
 router.get('/productioncenter-summary', prodController.getProductionCenterSummary);
+
+// sapling report 
 router.get('/district-sapling-summary/',  prodController.getDistrictSaplingSummary);
 router.get('/block-sapling-summary/', prodController.getBlockSaplingSummary);
 router.get('/productioncenter-sapling-summary/', prodController.getProductionCenterSaplingSummary);

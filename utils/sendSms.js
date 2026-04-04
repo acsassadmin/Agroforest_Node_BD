@@ -28,7 +28,7 @@ const sendBillLinkSms = async (to, orderId, farmerName) => {
     const billUrl = `${baseUrl}/users/generate-bill-pdf/?order_id=${orderId}`;
    
     
-    
+
     const message = await client.messages.create({
       body: `Hi ${farmerName || 'Farmer'}, your bill for Order ${orderId} is ready. View here: ${billUrl}`,
       from:"+16164410732",
@@ -42,5 +42,61 @@ const sendBillLinkSms = async (to, orderId, farmerName) => {
   }
 };
 
+const sendApprovalSms = async (
+  to,
+  farmerName,
+  productionCenterName,
+  productionCenterAddress,
+  contactPerson,
+  approvedItems,
+  rejectedItems,
+  totalAmount
+) => {
+  try {
+    if (!to) return;
 
-module.exports = { sendOtpSms , sendBillLinkSms};
+    // Format items
+    const approvedText = approvedItems.length
+      ? approvedItems.map(i => `${i.name} (${i.qty})`).join(', ')
+      : 'None';
+
+    const rejectedText = rejectedItems.length
+      ? rejectedItems.map(i => `${i.name}`).join(', ')
+      : 'None';
+
+    const message = `
+🌱 TN Agroforestry
+
+Dear ${farmerName || 'Farmer'},
+
+Your request has been processed.
+
+✅ Approved: ${approvedText}
+❌ Rejected: ${rejectedText}
+
+💰 Total Amount: ₹${totalAmount || 0}
+
+📍 Collect from:
+${productionCenterName}
+${productionCenterAddress}
+
+📞 Contact: ${contactPerson}
+
+Please visit your account for full details.
+`.trim();
+
+    const sms = await client.messages.create({
+      body: message,
+      from:"+16164410732",
+      to: "+918148614356", // ✅ use passed number
+    });
+    console.log(message , "message will be ")
+    console.log("✅ Approval SMS sent:", sms.sid);
+    return sms;
+
+  } catch (error) {
+    console.error("❌ Approval SMS error:", error.message);
+  }
+};
+
+module.exports = { sendOtpSms , sendBillLinkSms , sendApprovalSms};
