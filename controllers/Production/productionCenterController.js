@@ -289,7 +289,6 @@ exports.getProductionCenters = async (req, res) => {
         }
 
         const formatted = formatCenterData(centers, certs);
-
         res.json({
             total: totalCount,
             page,
@@ -318,7 +317,7 @@ exports.createProductionCenter = async (req, res) => {
             (production_type, status, name_of_production_centre,
              complete_address, district_id, block_id, village_id, contact_person, mobile_number,
              latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , area , created_by_id)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+            VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
             [
                 body.production_type || 'government',
                 body.name_of_production_centre,
@@ -332,9 +331,9 @@ exports.createProductionCenter = async (req, res) => {
                 body.longitude,
                 body.nursery_capacity,
                 body.certification_details,
-                body.nursery_category ,
-                body.department_id ,
-                body.area_acres ,
+                body.nursery_category,
+                body.department_id,
+                body.area_acres,
                 userId
             ]
         );
@@ -883,10 +882,10 @@ exports.getDistrictSaplingSummary = async (req, res) => {
                 ), 0) AS total_sold,
                 
                 COALESCE((
-                    SELECT SUM(s.saplings_available * s.price_per_sapling) 
-                    FROM productioncenter_stockdetails s
-                    JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
-                    WHERE s.species_id = t.id AND pc.status = 'approved'
+                SELECT SUM(s.total_selled * s.price_per_sapling) 
+                FROM productioncenter_stockdetails s
+                JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id 
+                WHERE s.species_id = t.id AND pc.status = 'approved'
                 ), 0) AS total_sale_price
             FROM tbl_agroforest_trees t
             ORDER BY t.name ASC

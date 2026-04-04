@@ -25,29 +25,33 @@ exports.createTargetBlock = async (req, res) => {
         if (userRow.length === 0) return res.status(404).json({ message: "User not found" });
         const { district_id } = userRow[0];
 
-        const { block_id, target_quantity, start_date, end_date, scheme_type, scheme_id } = req.body;
+        // ✅ 1. Added target_department_id to destructuring
+        const { block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, target_department_id } = req.body;
 
         // --- NEW: DUPLICATE CHECK LOGIC ---
+        // ✅ 2. Added target_department_id to duplicate check (so Agri and Horti don't overlap)
         const [existing] = await db.query(
             `SELECT id FROM target_block 
              WHERE block_id = ? 
+             AND target_department_id = ?
              AND start_date = ? 
              AND scheme_type = ? 
              AND (scheme_id = ? OR (scheme_id IS NULL AND ? IS NULL))`,
-            [block_id, start_date, scheme_type, scheme_id, scheme_id]
+            [block_id, target_department_id || null, start_date, scheme_type, scheme_id, scheme_id]
         );
 
         if (existing.length > 0) {
             return res.status(400).json({ 
-                message: "A target for this block and scheme already exists for this period." 
+                message: "A target for this block, department, and scheme already exists for this period." 
             });
         }
         // --- END OF CHECK ---
 
+        // ✅ 3. Added target_department_id to INSERT columns and values
         await db.query(
-            `INSERT INTO target_block (district_id, block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, created_by) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [district_id, block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, userId]
+            `INSERT INTO target_block (district_id, target_department_id, block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, created_by) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [district_id, target_department_id || null, block_id, target_quantity, start_date, end_date, scheme_type, scheme_id, userId]
         );
 
         res.status(201).json({ message: "Created successfully" });
@@ -61,33 +65,126 @@ exports.createTargetBlock = async (req, res) => {
 exports.getAllTargetBlocks = async (req, res) => {
     try {
         const userId = req.user.id;
-        const [userRow] = await db.query(`SELECT district_id FROM users_customuser WHERE id = ?`, [userId]);
-        const uDistId = userRow[0].district_id;
-
-        // ✅ FETCH ALL ALLOCATIONS for this district (Individual rows for each scheme)
-        const [districtAllocations] = await db.query(
-            `SELECT scheme_type, scheme_id, target_quantity 
-             FROM target_district 
-             WHERE district_id = ? AND YEAR(start_date) = YEAR(CURDATE())`, 
-            [uDistId]
+        
+        // 1. Get User Info (Added block_id)
+        const [userRow] = await db.query(
+            `SELECT u.district_id, u.department_id, u.block_id, d.District_Name 
+             FROM users_customuser u 
+             LEFT JOIN master_district d ON u.district_id = d.id 
+             WHERE u.id = ?`, 
+            [userId]
         );
+        
+        if (userRow.length === 0) return res.status(404).json({ message: "User not found" });
+        
+        const uDistId = userRow[0].district_id;
+        const uDeptId = userRow[0].department_id;
+        const uBlockId = userRow[0].block_id; // ✅ NEW: Grab block ID
+        const uDistName = userRow[0].District_Name;
 
-        const [rows] = await db.query(`
-            SELECT tb.*, b.Block_Name as block_name, s.name as scheme_name
+        const authHeader = req.headers.authorization;
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.decode(token);
+        const userRole = decoded?.role || "district_admin";
+
+        // 2. The Main Base Query
+        const dataQuery = `
+            SELECT 
+                tb.*, 
+                IFNULL(dept.name, 'General') AS department_name, 
+                b.Block_Name AS block_name, 
+                d.District_Name AS district_name, 
+                s.name AS scheme_name
             FROM target_block tb
+            LEFT JOIN department dept ON IFNULL(tb.target_department_id, 0) = IFNULL(dept.id, 0)
             LEFT JOIN master_block b ON tb.block_id = b.id
+            LEFT JOIN master_district d ON tb.district_id = d.id
             LEFT JOIN tn_schema s ON tb.scheme_id = s.id
-            WHERE tb.district_id = ?`, [uDistId]);
+        `;
 
+        let rows = [];
+        let districtAllocations = [];
+        let whereClause = "";
+        let queryParams = [];
+
+        // 3. Role-based Data & Allocation Fetching
+        if (userRole === 'superadmin') {
+            // SUPERADMIN: See everything
+            const [allocRes] = await db.query(`SELECT * FROM target_district`);
+            districtAllocations = allocRes;
+            
+            const [dataRes] = await db.query(`${dataQuery} ORDER BY tb.id DESC`);
+            rows = dataRes;
+
+        } else if (userRole === 'department_admin') {
+            // DEPARTMENT ADMIN: See only their department's assigned district targets
+            if (!uDeptId) return res.status(403).json({ message: "Department not assigned to user" });
+            
+            const [allocRes] = await db.query(
+                `SELECT * FROM target_district WHERE target_department_id = ?`, 
+                [uDeptId]
+            );
+            districtAllocations = allocRes;
+            
+            whereClause = `WHERE tb.target_department_id = ?`;
+            queryParams = [uDeptId];
+            
+            const [dataRes] = await db.query(`${dataQuery} ${whereClause} ORDER BY tb.id DESC`, queryParams);
+            rows = dataRes;
+
+        } else if (userRole === 'district_admin') {
+            // DISTRICT ADMIN: See only their district's data
+            if (!uDistId) return res.status(403).json({ message: "District not assigned to user" });
+            
+            const [allocRes] = await db.query(
+                `SELECT * FROM target_district WHERE district_id = ?`, 
+                [uDistId]
+            );
+            districtAllocations = allocRes;
+            
+            whereClause = `WHERE tb.district_id = ?`;
+            queryParams = [uDistId];
+            
+            const [dataRes] = await db.query(`${dataQuery} ${whereClause} ORDER BY tb.id DESC`, queryParams);
+            rows = dataRes;
+
+        } else if (userRole === 'block_admin') {
+            // BLOCK ADMIN: See ONLY their specific block's data
+            if (!uBlockId) return res.status(403).json({ message: "Block not assigned to user" });
+            
+            // Block admins still need their district's allocations to enforce limits on the frontend
+            const [allocRes] = await db.query(
+                `SELECT * FROM target_district WHERE district_id = ?`, 
+                [uDistId]
+            );
+            districtAllocations = allocRes;
+            
+            whereClause = `WHERE tb.block_id = ?`;
+            queryParams = [uBlockId];
+            
+            const [dataRes] = await db.query(`${dataQuery} ${whereClause} ORDER BY tb.id DESC`, queryParams);
+            rows = dataRes;
+
+        } else {
+            return res.status(403).json({ message: "Unauthorized role" });
+        }
+
+        // 4. Final Response
         res.status(200).json({
-            data: rows,
-            district_allocations: districtAllocations, // ✅ Send the array of limits
-            user_district_id: uDistId
+            success: true,
+            data: rows || [],
+            district_allocations: districtAllocations || [],
+            user_district_id: uDistId, // Kept for frontend to fetch blocks dynamically
+            user_district_name: uDistName || "My District"
         });
+
     } catch (err) {
+        console.error("GET ALL ERROR:", err);
         res.status(500).json({ error: err.message });
     }
 };
+
+
 // ===================== UPDATE TARGET BLOCK =====================
 exports.updateTargetBlock = async (req, res) => {
     try {
