@@ -3,7 +3,7 @@ const redis = require('redis');
 const client = redis.createClient({
   url: 'redis://localhost:6379',
   socket: {
-    connectTimeout: 10000, // 10s (increase if needed)
+    connectTimeout: 10000,
     reconnectStrategy: (retries) => Math.min(retries * 50, 5000) // backoff
   }
 });
