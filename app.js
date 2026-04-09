@@ -32,6 +32,9 @@ const targetDistrictRoutes = require('./routes/targetdistrict');
 const targetBlockRoutes = require('./routes/targetblock');
 const targetProductionCenterRoutes = require('./routes/targetproductioncenter');
 const masterRoutes = require("./routes/master");
+const former = require("./routes/former")
+
+
 
 app.use('/users', userRoutes);
 app.use('/center', centerRoutes);
@@ -43,6 +46,7 @@ app.use('/targetdistrict', targetDistrictRoutes);
 app.use('/targetblock', targetBlockRoutes);
 app.use('/targetproductioncenter', targetProductionCenterRoutes);
 app.use('/master', masterRoutes);
+app.use('/former',former)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ✅ START HTTPS SERVER (instead of app.listen)
 https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {

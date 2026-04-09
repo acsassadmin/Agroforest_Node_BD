@@ -929,15 +929,84 @@ exports.getFarmerAadhar = async (req, res) => {
 // ==========================================
 
 
+// exports.getAadhar = async (req, res) => {
+//   try {
+//     const { aadhar_no } = req.body;
+
+//     if (!aadhar_no) {
+//       return res.status(400).json({ error: "Aadhaar number is required." });
+//     }
+
+//     // Query the Aadhaar table
+//     const [aadhaarRows] = await db.query(
+//       `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
+//       [aadhar_no]
+//     );
+
+//     if (!aadhaarRows.length) {
+//       return res.status(404).json({
+//         error: "Invalid credentials. Please register your Aadhaar to proceed."
+//       });
+//     }
+
+//     const { farmer_id, user_id, district_id, block_id, farmer_name, department_id } = aadhaarRows[0];
+
+//     // JWT secrets
+//     const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+//     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
+
+//     // Create tokens
+//     const accessToken = jwt.sign(
+//       {
+//         id: user_id,
+//         role: 'farmer',
+//         district_id: district_id || null,
+//         block_id: block_id || null,
+//         department_id: department_id || null
+//       },
+//       JWT_SECRET,
+//       { expiresIn: '2h' }
+//     );
+
+//     const refreshToken = jwt.sign(
+//       { id: user_id },
+//       JWT_REFRESH_SECRET,
+//       { expiresIn: '7d' }
+//     );
+
+//     // Send response exactly in the desired format
+//     return res.json({
+//       status: "success",
+//       message: "Requested Data Available",
+//       access: accessToken,
+//       refresh: refreshToken,
+//       user_id: user_id,
+//       role: 'farmer',
+//       user_name: farmer_name,
+//       department_id: department_id || null,
+//       district_id: district_id || null,
+//       block_id: block_id || null,
+//       production_center_id: null,
+//       production_center_status: null
+//     });
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: err.message });
+//   }
+//   };
+
+
 exports.getAadhar = async (req, res) => {
   try {
     const { aadhar_no } = req.body;
 
+    //  Validate input
     if (!aadhar_no) {
       return res.status(400).json({ error: "Aadhaar number is required." });
     }
 
-    // Query the Aadhaar table
+    //  Get Aadhaar details
     const [aadhaarRows] = await db.query(
       `SELECT * FROM users_farmeraathardetails WHERE aadhar_no = ?`,
       [aadhar_no]
@@ -949,13 +1018,72 @@ exports.getAadhar = async (req, res) => {
       });
     }
 
-    const { farmer_id, user_id, district_id, block_id, farmer_name, department_id } = aadhaarRows[0];
+    const {
+      farmer_id,
+      user_id,
+      district_id,
+      block_id,
+      farmer_name,
+      department_id
+    } = aadhaarRows[0];
 
-    // JWT secrets
+    //  Fetch farmer lands
+    const [landRows] = await db.query(
+      `SELECT 
+        land_id AS landId,
+        lgd_district_code AS lgdDistrictCode,
+        lgd_sub_district_code AS lgdSubDistrictCode,
+        lgd_village_code AS lgdVillageCode,
+        village_name AS villageName,
+        survey_no AS surveyNo,
+        sub_div_no AS subDivNo,
+        area,
+        village_id,
+        district_id AS district,
+        block_id AS block
+      FROM farmer_land_details
+      WHERE farmer_id = ?`,
+      [farmer_id]
+    );
+
+    // Extract land IDs
+    const landIds = landRows.map(land => land.landId);
+
+    // Fetch patta lands using landRef
+    let pattaLandRows = [];
+
+    if (landIds.length > 0) {
+      const [rows] = await db.query(
+        `SELECT
+          areaHa AS areaSQ,
+          landType,
+          pattaNo AS pattaNO,
+          landRef
+         FROM patta_cita
+         WHERE landRef IN (?)`,
+        [landIds]
+      );
+
+      pattaLandRows = rows;
+    }
+
+    // Map patta lands to each land
+    const landsWithPatta = landRows.map(land => {
+      const relatedPatta = pattaLandRows.filter(
+        p => p.landRef === land.landId
+      );
+
+      return {
+        ...land,
+        pattaLands: relatedPatta
+      };
+    });
+
+    //  JWT secrets
     const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
 
-    // Create tokens
+    //  Generate tokens
     const accessToken = jwt.sign(
       {
         id: user_id,
@@ -974,7 +1102,7 @@ exports.getAadhar = async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    // Send response exactly in the desired format
+    //  Final response
     return res.json({
       status: "success",
       message: "Requested Data Available",
@@ -987,12 +1115,16 @@ exports.getAadhar = async (req, res) => {
       district_id: district_id || null,
       block_id: block_id || null,
       production_center_id: null,
-      production_center_status: null
+      production_center_status: null,
+      lands: landsWithPatta || []
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+    console.error("Error in getAadhar:", err);
+    return res.status(500).json({
+      error: "Internal Server Error",
+      details: err.message
+    });
   }
 };
 
@@ -1006,7 +1138,8 @@ exports.checkAadharForRegistration = async (req, res) => {
       return res.status(400).json({ error: "Valid 12-digit Aadhaar required" });
     }
 
-    // 1. Check if Aadhaar exists in farmer table
+
+            //  Check if Aadhaar exists in farmer table
     const [farmerRows] = await db.query(
       `SELECT id, farmer_id, farmer_name, father_name, mobile_number, 
               district_id, block_id, village_id, social_status, gender, 

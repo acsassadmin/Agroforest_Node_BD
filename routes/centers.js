@@ -60,7 +60,6 @@ router.get('/production-centers/excel/', authenticateToken, stockController.down
 router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
 
 
-
 // GET ALL (uses same function as below)
 router.get('/schema/', stockController.getScheme);
 router.get('/schema/:id', authenticateToken, stockController.getScheme);

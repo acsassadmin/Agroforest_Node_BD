@@ -75,7 +75,7 @@ exports.createProductionCenterType = async (req, res) => {
         const { name } = req.body;
         const [result] = await db.query('INSERT INTO productioncenter_productioncentertypes (name) VALUES (?)', [name]);
         
-        await clearProductionCenterCache(); // Clear Cache
+        await clearProductionCenterCache(); 
         
         res.status(201).json({ id: result.insertId, name });
     } catch (err) {
