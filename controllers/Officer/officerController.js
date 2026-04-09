@@ -1208,12 +1208,8 @@ exports.uploadInspectionDetails = async (req, res) => {
             uploadId: uploadId
         });
 
-<<<<<<< HEAD
-
-=======
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: "Server error" });
     }
 };
->>>>>>> 5f6e3893e1ffc9e3edc60d36078b6a12be094ecf
