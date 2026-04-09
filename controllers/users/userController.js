@@ -36,6 +36,7 @@ async function geocodeAddress(address) {
 //   try {
 //     // 1. Destructure Email along with other fields
 //     const { username, password, phone, role, email } = req.body;
+
 //     // 2. Validate required fields
 //     if (!phone || !password || !email) {
 //       return res.status(400).json({ message: 'Phone, Password, and Email are required' });
@@ -129,6 +130,7 @@ async function geocodeAddress(address) {
 //     // 4. Insert into Database
 //     // COLUMNS: username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined
 //     // COUNT: 9 Columns
+
 //     const insertQuery = `
 //       INSERT INTO users_customuser
 //         (username, phone, email, password, role_id, is_active, is_superuser, first_name, date_joined)
@@ -220,6 +222,7 @@ async function geocodeAddress(address) {
 //       JWT_REFRESH_SECRET,
 //       { expiresIn: '7d' }
 //     );
+
 //     // 5. Send Response (Added new fields here)
 //     res.json({
 //       access: accessToken,
@@ -277,11 +280,15 @@ exports.sendLoginOtp = async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT u.id, u.username, u.email, u.password, u.role_id, 
-              r.name as role_name, u.department_id, u.district_id, u.block_id, 
-              pc.id as production_center_id, pc.status as production_center_status
+              r.name as role_name, u.department_id, u.district_id, u.block_id, md.District_Name , mb.Block_Name , 
+              pc.id as production_center_id, pc.status as production_center_status , pc.production_type
        FROM users_customuser u
        LEFT JOIN users_role r ON u.role_id = r.id
        LEFT JOIN productioncenter_productioncenter pc ON pc.created_by_id = u.id
+       LEFT JOIN master_district md ON md.id = u.district_id
+       LEFT JOIN master_block mb ON mb.id = u.block_id
+
+
        WHERE u.phone = ?`,
       [formattedPhone]
     );
@@ -304,7 +311,7 @@ exports.sendLoginOtp = async (req, res) => {
       }
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = "987654";
 
     const payload = {
       user_id: user.id,
@@ -315,14 +322,18 @@ exports.sendLoginOtp = async (req, res) => {
       role_name: user.role_name,
       department_id: user.department_id,
       district_id: user.district_id,
+      district_name : user.District_Name,
       block_id: user.block_id,
-      production_center_id: user.production_center_id,
-      production_center_status: user.production_center_status
+      block_name :user.Block_Name,
+       production_center_id: user.production_center_id,
+      production_center_status: user.production_center_status,
+      production_type : user.production_type
     };
+    console.log(payload,"payload");
 
     await redisClient.set(`login_${formattedPhone}`, JSON.stringify(payload), { EX: 600 });
     // await sendOtpSms(formattedPhone, otp);
-
+    console.log(otp,"otp")
     return res.status(200).json({ message: 'OTP sent to phone', otp });
   } catch (err) {
     console.error('sendLoginOtp Error:', err);
@@ -358,9 +369,12 @@ exports.verifyLoginOtp = async (req, res) => {
       role_name: data.role_name,
       department_id: data.department_id,
       district_id: data.district_id,
+    district_name : data.district_name,
       block_id: data.block_id,
+      block_name :data.block_name,
       production_center_id: data.production_center_id || null,
-      production_center_status: data.production_center_status || null
+      production_center_status: data.production_center_status || null ,
+      production_type : data.production_type || null
     };
 
     // Issue JWTs
@@ -388,7 +402,11 @@ exports.verifyLoginOtp = async (req, res) => {
       production_center_status: user.production_center_status,
       department_id: user.department_id || null,
       district_id: user.district_id || null,
-      block_id: user.block_id || null
+      block_id: user.block_id || null,
+       district_name : user.district_name || null,
+      block_id: user.block_id || null,
+      block_name :user.block_name || null,
+      production_type : user.production_type || null 
     });
 
   } catch (err) {
@@ -422,6 +440,7 @@ exports.forgotPassword = async (req, res) => {
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
     // Store in Redis with 10 min TTL (Key: reset_<phone>)
     await redisClient.set(`reset_${e164}`, otp, { EX: 600 });
 
@@ -438,6 +457,7 @@ exports.forgotPassword = async (req, res) => {
 exports.resetPassword = async (req, res) => {
   try {
     const { phone, otp, newPassword } = req.body;
+
     if (!phone || !otp || !newPassword) {
       return res.status(400).json({ message: 'Phone, OTP, and New Password are required' });
     }
@@ -465,6 +485,7 @@ exports.resetPassword = async (req, res) => {
 
     // Check Redis for OTP using the exact phone string from DB
     const storedOtp = await redisClient.get(`reset_${storedPhone}`);
+
     if (!storedOtp) {
       return res.status(400).json({ message: 'OTP expired. Please request a new one.' });
     }
@@ -791,6 +812,7 @@ exports.getFarmerAadhar = async (req, res) => {
     }
 
 
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -1036,38 +1058,81 @@ exports.checkAadharForRegistration = async (req, res) => {
     );
     const newUserPk = userResult.insertId;
 
-    // 5. Fetch lat/lng from Photon API
-    let latitude = null;
-    let longitude = null;
+    // 5. Fetch location names from database for better geocoding
+    let fullAddress = farmer.address || '';
+    
     try {
-      const geoRes = await axios.get('https://photon.komoot.io/api/', {
-        params: {
-          q: farmer.address,
-          limit: 1
-        },
-        headers: {
-          'User-Agent': 'YourAppName/1.0' // Photon requires a User-Agent
-        }
-      });
+      // Fetch district, block, village names
+      let districtName = '';
+      let blockName = '';
+      let villageName = '';
+      let stateName = ''; // Add your state if needed
 
-      if (geoRes.data && geoRes.data.features && geoRes.data.features.length > 0) {
-        const coords = geoRes.data.features[0].geometry.coordinates;
-        longitude = coords[0]; // Photon gives [lon, lat]
-        latitude = coords[1];
+      if (farmer.village_id) {
+        const [village] = await db.query(
+          `SELECT name FROM village WHERE id = ?`, 
+          [farmer.village_id]
+        );
+        if (village.length > 0) villageName = village[0].name;
       }
-    } catch (geoErr) {
-      console.error("Geocoding failed", geoErr);
+
+      if (farmer.block_id) {
+        const [block] = await db.query(
+          `SELECT name FROM block WHERE id = ?`, 
+          [farmer.block_id]
+        );
+        if (block.length > 0) blockName = block[0].name;
+      }
+
+      if (farmer.district_id) {
+        const [district] = await db.query(
+          `SELECT name FROM district WHERE id = ?`, 
+          [farmer.district_id]
+        );
+        if (district.length > 0) districtName = district[0].name;
+      }
+
+      // Build comprehensive address for geocoding
+      const addressParts = [
+        farmer.address,
+        villageName,
+        blockName,
+        districtName,
+        'Odisha', // Change to your state
+        'India'
+      ].filter(part => part && part.trim() !== '');
+
+      fullAddress = addressParts.join(', ');
+      console.log('Full address for geocoding:', fullAddress);
+
+    } catch (locErr) {
+      console.error("Error fetching location names:", locErr);
     }
 
-    // 6. Insert into users_farmeraathardetails with lat/lng
+    // 6. Fetch lat/lng using multiple geocoding services as fallback
+    let latitude = null;
+    let longitude = null;
+
+    // Try Nominatim first (better for Indian addresses)
+    const geocodingResult = await getCoordinatesFromAddress(fullAddress);
+    
+    if (geocodingResult) {
+      latitude = geocodingResult.lat;
+      longitude = geocodingResult.lng;
+      console.log(`Geocoded: ${latitude}, ${longitude}`);
+    } else {
+      console.log('Geocoding failed for address:', fullAddress);
+    }
+
+    // 7. Insert into users_farmeraathardetails with lat/lng
     await db.query(
       `INSERT INTO users_farmeraathardetails 
-       (aadhar_no, address, farmer_name, mobile_number, district_id, block_id, village_id, type, user_id, latitude, longitude) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'farmer', ?, ?, ?)`,
+       (aadhar_no, address, farmer_name, mobile_number, district_id, block_id, village_id, type, user_id, latitude, longitude, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'farmer', ?, ?, ? , NOW())`,
       [aadhar_no, farmer.address, farmer.farmer_name, farmer.mobile_number, farmer.district_id, farmer.block_id, farmer.village_id, newUserPk, latitude, longitude]
     );
 
-    // 7. Generate JWT tokens
+    // 8. Generate JWT tokens
     const JWT_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
     const JWT_REFRESH_SECRET = 'django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1';
 
@@ -1080,7 +1145,7 @@ exports.checkAadharForRegistration = async (req, res) => {
 
     const refreshToken = jwt.sign({ id: newUserPk }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
 
-    // 8. Send response
+    // 9. Send response
     return res.json({
       status: "linked_and_logged_in",
       message: "Aadhaar verified and linked successfully!",
@@ -1106,6 +1171,83 @@ exports.checkAadharForRegistration = async (req, res) => {
   }
 };
 
+// ============================================
+// SEPARATE GEOCODING FUNCTION WITH MULTIPLE FALLBACKS
+// ============================================
+
+async function getCoordinatesFromAddress(address) {
+  // Method 1: Nominatim (OpenStreetMap) - Best for Indian addresses
+  try {
+    const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+      params: {
+        q: address,
+        format: 'json',
+        limit: 1,
+        countrycodes: 'in' // Restrict to India only
+      },
+      headers: {
+        'User-Agent': 'YourAppName/1.0'
+      },
+      timeout: 10000
+    });
+
+    if (response.data && response.data.length > 0) {
+      return {
+        lat: parseFloat(response.data[0].lat),
+        lng: parseFloat(response.data[0].lon)
+      };
+    }
+    console.log('Nominatim returned no results');
+  } catch (err) {
+    console.error('Nominatim error:', err.message);
+  }
+
+  // Method 2: Photon API (Fallback)
+  try {
+    const response = await axios.get('https://photon.komoot.io/api/', {
+      params: {
+        q: address,
+        limit: 1
+      },
+      headers: {
+        'User-Agent': 'YourAppName/1.0'
+      },
+      timeout: 10000
+    });
+
+    if (response.data && response.data.features && response.data.features.length > 0) {
+      const coords = response.data.features[0].geometry.coordinates;
+      return {
+        lat: coords[1],
+        lng: coords[0]
+      };
+    }
+    console.log('Photon returned no results');
+  } catch (err) {
+    console.error('Photon error:', err.message);
+  }
+
+  // Method 3: Try with simplified address (remove house numbers, etc.)
+  try {
+    // Remove common patterns that confuse geocoders
+    const simplifiedAddress = address
+      .replace(/house\s*no\.?\s*\d+/gi, '')
+      .replace(/ward\s*\d+/gi, '')
+      .replace(/plot\s*no\.?\s*\d+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (simplifiedAddress !== address) {
+      console.log('Trying simplified address:', simplifiedAddress);
+      return await getCoordinatesFromAddress(simplifiedAddress);
+    }
+  } catch (err) {
+    console.error('Simplification error:', err.message);
+  }
+
+  return null;
+}
+
 
 // ==========================================
 // 3. REGISTER NON-FARMER (UPDATED WITH LAT/LNG)
@@ -1114,13 +1256,15 @@ exports.checkAadharForRegistration = async (req, res) => {
 
 exports.registerNonFarmer = async (req, res) => {
   try {
-    const {
+    const { 
       aadhar_no,
-      farmer_name,
-      mobile_number,
       address,
+      district_id,
+      farmer_name,
+      latitude,
+      longitude,
+      mobile_number,
       purpose,
-      district_id
     } = req.body;
 
     // Validate required fields
@@ -1131,6 +1275,7 @@ exports.registerNonFarmer = async (req, res) => {
     if (aadhar_no.length !== 12) {
       return res.status(400).json({ error: "Invalid Aadhaar number" });
     }
+
 
 
     // Check if Aadhaar already exists in farmer table
@@ -1165,11 +1310,7 @@ exports.registerNonFarmer = async (req, res) => {
     );
     const newUserPk = userResult.insertId;
 
-    // -----------------------------
-    // Geocode address using Photon
-    // -----------------------------
-    let latitude = null;
-    let longitude = null;
+    
 
     if (address) {
       try {
@@ -1191,8 +1332,8 @@ exports.registerNonFarmer = async (req, res) => {
     // 2. Insert into users_farmeraathardetails table
     await db.query(
       `INSERT INTO users_farmeraathardetails 
-       (aadhar_no, non_farmer_id, farmer_name, purpose, mobile_number, district_id, address, latitude, longitude, type, user_id) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'non-farmer', ?)`,
+       (aadhar_no, non_farmer_id, farmer_name, purpose, mobile_number, district_id, address, latitude, longitude, type, user_id , created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'non-farmer', ? , NOW())`,
       [
         aadhar_no,
         newNonFarmerId,
@@ -1320,6 +1461,7 @@ exports.farmerRequest = async (req, res) => {
 
 exports.approveItem = async (req, res) => {
   const connection = await db.getConnection();
+
   try {
     await connection.beginTransaction();
 
@@ -2231,6 +2373,7 @@ exports.getWeeklyFarmerRequestReport = async (req, res) => {
 // exports.getProductionCentersList = async (req, res) => {
 //     try {
 //         console.log("🚀 --- PRODUCTION CENTERS LIST API ---");
+
 //         // 1. Get user info for filtering
 //         const { role, district_id, block_id } = req.user;
 //         console.log("🔐 User Role:", role);
@@ -2802,9 +2945,10 @@ exports.generateBillPdf = async (req, res) => {
     if (!order_id) return res.status(400).json({ error: "order_id is required" });
 
     const [orderRows] = await db.query(`
-      SELECT ur.*, pc.name_of_production_centre AS pc_name, pc.production_type, pc.complete_address AS pc_address
+      SELECT ur.*, pc.name_of_production_centre AS pc_name , dept.name AS department_name, pc.production_type, pc.complete_address AS pc_address
       FROM users_farmerrequest ur
       JOIN productioncenter_productioncenter pc ON ur.production_center_id = pc.id
+      JOIN department dept ON pc.department_id = dept.id
       WHERE ur.orderid = ?
     `, [order_id]);
 
@@ -2878,17 +3022,40 @@ exports.generateBillPdf = async (req, res) => {
 
     let y = c;
 
+if (order.production_type === 'government') {
+    const logoPaths = [
+  path.join(__dirname, '../public/TN.png'),
+  path.join(__dirname, '../../public/TN.png'),
+  path.join(process.cwd(), 'public/TN.png')
+];
+
+for (const p of logoPaths) {
+  if (fs.existsSync(p)) {
+    const logoWidth = 60;
+    const x = (pw - logoWidth) / 2;
+
+    doc.image(p, x, y, { width: logoWidth });
+    y += logoWidth + 10; // move content below logo
+
+    break;
+  }
+}
+}
+
     // --- Header (unchanged) ---
-    doc.moveTo(c, y).lineTo(c + cw, y).strokeColor('#2e7d32').lineWidth(2).stroke();
-    y += 15;
+    // doc.moveTo(c, y).lineTo(c + cw, y).strokeColor('#2e7d32').lineWidth(2).stroke();
+    // y += 15;
     doc.fillColor('#000000').fontSize(18).font('Helvetica-Bold')
       .text(order.pc_name || "Production Center", c, y, { width: cw, align: 'center' });
     y = doc.y + 4;
     doc.fillColor('#555').fontSize(9).font('Helvetica')
+      .text(order.department_name || "", c, y, { width: cw, align: 'center' });
+    y = doc.y + 7;
+    doc.fillColor('#555').fontSize(9).font('Helvetica')
       .text(order.pc_address || "", c, y, { width: cw, align: 'center' });
-    y = doc.y + 12;
+    y = doc.y + 10;
     doc.fillColor('#1b5e20').fontSize(11).font('Helvetica-Bold')
-      .text("TAX INVOICE / BILL", c, y, { width: cw, align: 'center' });
+      .text("INVOICE / BILL", c, y, { width: cw, align: 'center' });
     y = doc.y + 5;
     doc.moveTo(c, y).lineTo(c + cw, y).strokeColor('#2e7d32').lineWidth(2).stroke();
     y += 15;

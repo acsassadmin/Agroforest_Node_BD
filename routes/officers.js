@@ -16,5 +16,6 @@ router.get("/designations", officerController.getDesignation);
 router.put("/designations", officerController.updateDesignation);
 router.delete("/designations/:id", officerController.deleteDesignation);
 router.get('/usernames', officerController.getUsernames); 
+router.post("/Contact/", officerController.SendEmail);
 
 module.exports = router;

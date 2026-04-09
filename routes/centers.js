@@ -22,7 +22,7 @@ router.get('/production-centers-nearby/', authenticateToken, prodController.getN
 
 //report
 router.get('/district-summary/',  prodController.getDistrictSummary);
-router.get('/blocksummary/', prodController.getBlockSummary);
+router.get('/blocksummary/:id', prodController.getBlockSummary);
 router.get('/productioncenter-summary', prodController.getProductionCenterSummary);
 
 // sapling report 
@@ -39,7 +39,7 @@ router.delete('/distribution-centers/', authenticateToken, distController.delete
 // Stock Details
 router.get('/stock-details/',  stockController.getStockDetails);
 router.post('/stock-details/', authenticateToken,stockController.uploadMiddleware, stockController.createStockDetail);
-router.put('/stock-details/', authenticateToken, stockController.updateStockDetail);
+router.put('/stock-details/', authenticateToken, stockController.uploadMiddleware, stockController.updateStockDetail);
 router.delete('/stock-details/', authenticateToken, stockController.deleteStockDetail);
 
 router.get('/trees', stockController.getSpecies);
@@ -62,7 +62,7 @@ router.get('/dashboard-summary/', authenticateToken, stockController.getDashboar
 
 
 // GET ALL (uses same function as below)
-router.get('/schema/', authenticateToken, stockController.getScheme);
+router.get('/schema/', stockController.getScheme);
 router.get('/schema/:id', authenticateToken, stockController.getScheme);
 router.post('/schema/', authenticateToken, stockController.createScheme);
 router.put('/schema/:id', authenticateToken, stockController.updateScheme);

@@ -277,31 +277,58 @@ if (req.files && req.files.length > 0) {
     }
 };
 
+
 exports.updateStockDetail = async (req, res) => {
     try {
         const { id } = req.query;
-        if (!id) return res.status(400).json({ error: "id is required" });
+        if (!id) {
+            return res.status(400).json({ error: "id is required" });
+        }
 
+        // ✅ FIX: Extract fields from FormData properly
+        const data = {};
+        
+        // Loop through the FormData entries
+        for (const [key, value] of Object.entries(req.body)) {
+            // Multer might include empty strings for empty fields, skip them
+            if (value !== '' && value !== 'undefined') {
+                data[key] = value;
+            }
+        }
+
+        if (!Object.keys(data).length) {
+            return res.status(400).json({ error: "No data to update" });
+        }
+
+        const allowedFields = ['species_id', 'species_name', 'saplings_available', 'allocated_quantity', 'sapling_age', 'price_per_sapling', 'production_date', 'latitude', 'longitude', 'address'];
+        
         const fields = [];
         const values = [];
-        const allowed = ['species_name', 'saplings_available', 'allocated_quantity', 'sapling_age', 'price_per_sapling'];
 
-        allowed.forEach(f => {
-            if (req.body[f] !== undefined) {
+        // Build the UPDATE query dynamically
+        allowedFields.forEach(f => {
+            if (data[f] !== undefined) {
                 fields.push(`${f} = ?`);
-                values.push(req.body[f]);
+                values.push(data[f]);
             }
         });
 
         if (fields.length > 0) {
             values.push(id);
-            await db.query(`UPDATE productioncenter_stockdetails SET ${fields.join(', ')} WHERE id = ?`, values);
+            await db.query(
+                `UPDATE productioncenter_stockdetails SET ${fields.join(', ')} WHERE id = ?`,
+                values
+            );
         }
 
         await clearStockCache();
         
-        // Fetch updated
-        const [rows] = await db.query('SELECT * FROM productioncenter_stockdetails WHERE id = ?', [id]);
+        // Fetch updated row
+        const [rows] = await db.query(
+            'SELECT * FROM productioncenter_stockdetails WHERE id = ?',
+            [id]
+        );
+
         res.json(rows[0]);
 
     } catch (err) {

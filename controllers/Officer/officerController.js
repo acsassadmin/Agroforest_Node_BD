@@ -144,36 +144,47 @@ exports.getOfficerById = async (req, res) => {
 
 
 
+// Helper function to format JS Date to MySQL DATETIME
+function toMySQLDatetime(date) {
+    return new Date(date).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 exports.registerOfficer = async (req, res) => {
     const connection = await db.getConnection(); 
     try {
         await connection.beginTransaction();
 
         const {
-            officername, gender, mobile, email, department, designation,
-            role, district_id, block_id,
-            created_by, created_at // <--- New Fields
+            officername,
+            gender,
+            mobile,
+            email,
+            department,
+            designation,
+            role,
+            district_id,
+            block_id,
+            created_by,
+            created_at
         } = req.body;
 
-        console.log("mobile " , mobile)
-        if ( !email || !officername) {
+        // Check required fields
+        if (!mobile ||!email) {
             await connection.rollback();
-            return res.status(400).json({ message: "Missing required fields" });
+            return res.status(400).json({ message: "Mobile or email is required" });
         }
 
-        // Check existing user
+        // Check if user already exists
         const [existingUser] = await connection.query(
-            'SELECT id FROM users_customuser WHERE email = ?',
-            [email]
+            'SELECT id FROM users_customuser WHERE phone = ?',
+            [mobile]
         );
         if (existingUser.length > 0) {
             await connection.rollback();
             return res.status(400).json({ message: "User already exists" });
         }
 
-        
-
-        // Find Role ID
+        // Resolve Role ID
         let roleId = null;
         if (role) {
             const [roleRows] = await connection.query(
@@ -183,32 +194,54 @@ exports.registerOfficer = async (req, res) => {
             if (roleRows.length > 0) roleId = roleRows[0].id;
         }
 
-        let genderValue = gender === 'Male' ? 1 : 0;
+        // Gender as boolean (Male = 1, Female/Other = 0)
+        const genderValue = gender === 'Male' ? 1 : 0;
 
-        // 1. Insert into users_customuser
+        // Insert into users_customuser
         const insertUserQuery = `
             INSERT INTO users_customuser 
-            (username, email, role_id, is_active, date_joined, is_superuser, first_name, last_name, department_id, district_id, block_id , phone) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? , ?)`;
-        
+            (username, email, role_id, is_active, date_joined, is_superuser, is_staff, first_name, last_name, department_id, district_id, block_id, phone)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+        const now = toMySQLDatetime(new Date());
+
         const [userResult] = await connection.query(insertUserQuery, [
-            officername, email, roleId, true, new Date(), false, officername, null,
-            department, district_id, block_id , mobile
+            officername,
+            email,
+            roleId,
+            1,                  // is_active = true
+            now,                // date_joined
+            0,                  // is_superuser
+            0,                  // is_staff
+            officername,        // first_name
+            null,               // last_name
+            department,
+            district_id,
+            block_id,
+            mobile
         ]);
 
         const userId = userResult.insertId;
 
-        // 2. Insert into officer_details (Added created_by and created_at)
+        // Insert into officer_details
         const insertOfficerQuery = `
             INSERT INTO officer_details
             (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`, \`created_by\`, \`created_at\`)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        
+
         await connection.query(insertOfficerQuery, [
-            officername, genderValue, mobile, email, department, designation,
-            roleId, userId, district_id, block_id, 
-            created_by || null, // <--- New Field
-            created_at || new Date() // <--- New Field
+            officername,
+            genderValue,
+            mobile,
+            email,
+            department,
+            designation,
+            roleId,
+            userId,
+            district_id,
+            block_id,
+            created_by || null,
+            created_at ? toMySQLDatetime(created_at) : now
         ]);
 
         await connection.commit();
@@ -233,34 +266,32 @@ exports.updateOfficer = async (req, res) => {
 
     const { id } = req.params;
     const {
-      officername, gender, mobile, email, department, designation,
-      role,       // Frontend sends the Role ID (e.g., 5)
-      username,
-      password,   // optional
-      district_id, // Needed for users_customuser update
-      block_id     // Needed for users_customuser update
+      officername,
+      gender,
+      mobile,
+      email,
+      department,
+      designation,
+      role,          // Role ID from frontend
+      district_id,   // for users_customuser
+      block_id       // for users_customuser
     } = req.body;
 
-    // 1. Find officer_details row to get the linked User ID
+    // 1. Find officer_details to get the linked User ID
     const [officerRows] = await connection.query(
       'SELECT id, Username FROM officer_details WHERE id = ?', [id]
     );
-    
     if (!officerRows.length) {
       await connection.rollback();
       return res.status(404).json({ message: "Officer not found" });
     }
-    
     const officerDetail = officerRows[0];
     const userId = officerDetail.Username;
 
-    // 2. Prepare Data for officer_details
-    const genderValue = gender === 'Male' ? 1 : 0; // 1 for Male, 0 for Female
-    
-    // FIX: Frontend sends Role ID directly. Use it directly. No need to query 'users_role' table.
-    const roleId = role; 
+    // 2. Prepare data for officer_details
+    const genderValue = gender === 'Male' ? 1 : 0;
+    const roleId = role; // Use role ID directly from frontend
 
-    // Update officer_details
     const updateOfficerQuery = `
       UPDATE officer_details 
       SET 
@@ -283,16 +314,15 @@ exports.updateOfficer = async (req, res) => {
       email,
       department,
       designation,
-      roleId,      // The valid ID from frontend
+      roleId,
       userId,
       district_id || null,
       block_id || null,
       id
     ]);
 
-    // 3. Update users_customuser
-    // We need to update the fields that sync between the two tables
-    let updateUserQuery = `
+    // 3. Update users_customuser (no password, username = officername)
+    const updateUserQuery = `
       UPDATE users_customuser 
       SET 
         username = ?,
@@ -301,30 +331,20 @@ exports.updateOfficer = async (req, res) => {
         district_id = ?,
         block_id = ?,
         role_id = ?
-        ${password ? ', password = ?' : ''}
       WHERE id = ?`;
 
-    const userValues = [
-      username,
+    await connection.query(updateUserQuery, [
+      officername,
       email,
       department,
       district_id || null,
       block_id || null,
-      roleId
-    ];
-
-    if (password) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      userValues.push(hashedPassword);
-    }
-    
-    userValues.push(userId); // WHERE id = ?
-
-    await connection.query(updateUserQuery, userValues);
+      roleId,
+      userId
+    ]);
 
     await connection.commit();
     res.json({ message: "Officer updated successfully" });
-
   } catch (err) {
     await connection.rollback();
     console.error("Update Officer Error:", err);
@@ -381,7 +401,7 @@ exports.deleteOfficer = async (req, res) => {
 exports.getDepartments = async (req, res) => {
     try {
         const [rows] = await db.query(
-            "SELECT id, name FROM department ORDER BY id DESC"
+            "SELECT id, name FROM department ORDER BY id "
         );
         res.json(rows);
     } catch (err) {
@@ -593,6 +613,34 @@ exports.getUsernames = async (req, res) => {
         });
     }
 };
+
+    const { sendEmail } = require('../../utils/mailer');
+
+    exports.SendEmail = async (req, res) => {
+        try {
+            const {
+                email , message , name , phone
+            } = req.body;
+
+            if (!email || !name || !message || !phone) {
+                return res.status(400).json({
+                    message: "all feilds is required"
+                });
+            }
+
+            await sendEmail(email, message , name , phone)
+            res.status(201).json({
+                message: "mail send successfully",
+                
+            });
+        } catch (err) {
+            console.error("mail send Error:", err);
+            res.status(500).json({
+                error: err.message
+            });
+        }
+    };
+
 
 // ===================== REGISTER OFFICER =====================
 // exports.registerOfficer = async (req, res) => {
@@ -897,5 +945,6 @@ exports.getUsernames = async (req, res) => {
 //         });
 //     }
 // };
+
 
 

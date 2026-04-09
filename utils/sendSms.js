@@ -13,7 +13,7 @@ const sendOtpSms = async (to, otp) => {
       from:"+16164410732",
       to: "+918148614356", // ✅ use passed number
     });
-
+    console.log(otp,"otp")
     console.log('SMS sent:', message.sid);
     return message;
   } catch (error) {
@@ -24,7 +24,7 @@ const sendOtpSms = async (to, otp) => {
 
 const sendBillLinkSms = async (to, orderId, farmerName) => {
   try {
-    const baseUrl = "https://192.168.1.39:3001";
+    const baseUrl = "https://192.168.1.203:3001";
     const billUrl = `${baseUrl}/users/generate-bill-pdf/?order_id=${orderId}`;
    
     
