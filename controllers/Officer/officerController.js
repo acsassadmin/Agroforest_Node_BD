@@ -620,7 +620,7 @@ exports.getFarmerOrders = async (req, res) => {
     const user_id = req.params.userid;
     const role = req.params.role;
     const page = parseInt(req.query.page) || 1;
-    const limit = 10;
+    const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
     // 1️⃣ Get logged-in user
@@ -637,23 +637,19 @@ exports.getFarmerOrders = async (req, res) => {
 
     const user = userRows[0];
 
-    // 2️⃣ Base SQL (✅ FINAL FIXED JOIN)
+    // 2️⃣ BASE QUERY (❌ NO SCHEME JOIN HERE)
     let baseSql = `
       FROM users_farmerrequest ufr
 
-      -- ✅ Map farmer_id → users_customuser
       LEFT JOIN users_customuser cu 
         ON cu.id = ufr.farmer_id
 
-      -- ✅ Map user → farmer details
       LEFT JOIN users_farmeraathardetails fad 
         ON fad.user_id = cu.id
 
       LEFT JOIN master_district d ON d.id = fad.district_id
       LEFT JOIN master_block b ON b.id = fad.block_id
       LEFT JOIN master_village v ON v.id = fad.village_id
-
-      LEFT JOIN tn_schema ts ON ts.id = ufr.scheme_id
 
       LEFT JOIN productioncenter_productioncenter pc
         ON pc.id = ufr.production_center_id
@@ -677,42 +673,32 @@ exports.getFarmerOrders = async (req, res) => {
       params.push(user.department_id);
     }
 
-    // 4️⃣ Count query
+    // 4️⃣ Count
     const [[countResult]] = await db.execute(
-      `SELECT COUNT(*) as total ${baseSql}`,
+      `SELECT COUNT(DISTINCT ufr.id) as total ${baseSql}`,
       params
     );
 
     const totalRecords = countResult.total;
     const totalPages = Math.ceil(totalRecords / limit);
 
-    // 5️⃣ Orders query
+    // 5️⃣ Orders
     const [orders] = await db.execute(
       `
       SELECT 
         ufr.id AS request_id,
         ufr.orderid,
-        ufr.scheme_id,
         ufr.farmer_id,
         ufr.created_at,
 
-        -- ✅ Farmer details (NOW WORKS)
         fad.farmer_name,
         fad.mobile_number,
         fad.address,
-        fad.aadhar_no,
-        fad.latitude,
-        fad.longitude,
 
-        -- Location
         d.District_Name,
         b.Block_Name,
         v.village_name,
 
-        -- ✅ FIXED: Map scheme name
-        ts.name AS scheme_name,
-
-        -- Production center
         pc.id AS production_center_id,
         pc.name_of_production_centre,
         pc.complete_address,
@@ -737,7 +723,7 @@ exports.getFarmerOrders = async (req, res) => {
       });
     }
 
-    // 6️⃣ Items
+    // 6️⃣ ITEMS + ✅ SCHEME (FIXED HERE)
     const requestIds = orders.map(o => o.request_id);
 
     const [items] = await db.execute(
@@ -746,23 +732,53 @@ exports.getFarmerOrders = async (req, res) => {
         ufi.request_id,
         ufi.stock_id,
         ufi.final_quantity,
+        ufi.scheme_id,
+
+        ts.name AS scheme_name,
+
         t.name AS species_name,
         t.name_tamil AS species_name_tamil
+
       FROM users_farmerrequestitem ufi
-      LEFT JOIN tbl_agroforest_trees t ON t.id = ufi.species_id
+
+      LEFT JOIN tn_schema ts 
+        ON ts.id = ufi.scheme_id
+
+      LEFT JOIN tbl_agroforest_trees t 
+        ON t.id = ufi.species_id
+
       WHERE ufi.request_id IN (${requestIds.map(() => '?').join(',')})
       `,
       requestIds
     );
 
+    // Map items
     const itemsMap = {};
+    const schemeMap = {};
+
     items.forEach(i => {
+      // items
       if (!itemsMap[i.request_id]) itemsMap[i.request_id] = [];
-      itemsMap[i.request_id].push(i);
+      itemsMap[i.request_id].push({
+        request_id: i.request_id,
+        stock_id: i.stock_id,
+        final_quantity: i.final_quantity,
+        species_name: i.species_name,
+        species_name_tamil: i.species_name_tamil
+      });
+
+      // ✅ scheme (take first one)
+      if (!schemeMap[i.request_id] && i.scheme_id) {
+        schemeMap[i.request_id] = {
+          id: i.scheme_id,
+          name: i.scheme_name
+        };
+      }
     });
 
     // 7️⃣ Block admins
     const blockIds = [...new Set(orders.map(o => o.pc_block_id).filter(Boolean))];
+
     let blockAdminMap = {};
 
     if (blockIds.length) {
@@ -811,22 +827,17 @@ exports.getFarmerOrders = async (req, res) => {
       });
     }
 
-    // 9️⃣ Final response
+    // 9️⃣ FINAL RESPONSE
     const result = orders.map(order => ({
       order_id: order.orderid,
       order_date: order.created_at,
 
-      scheme: order.scheme_id
-        ? {
-            id: order.scheme_id,
-            name: order.scheme_name || "Unknown Scheme"  // Fix for null scheme name
-        }
-        : null,
+      // ✅ FIXED SCHEME
+      scheme: schemeMap[order.request_id] || null,
 
-      // ✅ FINAL (NO NULL)
       farmer: order.farmer_id
         ? {
-            id: order.farmer_id, // 82
+            id: order.farmer_id,
             name: order.farmer_name,
             mobile: order.mobile_number,
             address: order.address,
@@ -864,7 +875,7 @@ exports.getFarmerOrders = async (req, res) => {
 
   } catch (err) {
     console.error("ERROR:", err);
-    res.status(500).json({ message: "Server Error" });
+    res.status(500).json({ message: "Server Error", err });
   }
 };
 // assign inspection

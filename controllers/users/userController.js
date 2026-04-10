@@ -1590,8 +1590,6 @@ exports.farmerRequest = async (req, res) => {
   }
 };
 
-
-
 exports.approveItem = async (req, res) => {
   const connection = await db.getConnection();
 
@@ -1880,7 +1878,7 @@ exports.getCenterOrders = async (req, res) => {
           requested_items: []
         });
       }
-
+      
       if (row.item_id) {
         ordersMap.get(row.request_id).requested_items.push({
           item_id: row.item_id,

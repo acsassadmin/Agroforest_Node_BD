@@ -42,11 +42,9 @@ router.get('/target-details/', authenticateToken, userController.getTargetDetail
 router.get('/farmer-details/', authenticateToken, userController.getFarmerDetails);
 
 // ----------------Production center Dashboards--------------
-
 router.get('/production-counts/', authenticateToken, userController.getProductionCenterStats);
 router.get('/production-saplings/', authenticateToken, userController.getProductionCenterSaplings);
 router.get('/production-monthly-sales/', authenticateToken, userController.getMonthlyTotalSales);
-
 
 router.post('/register-production-center/', userController.createProductionCenter);
 router.get('/generate-bill-pdf/', userController.generateBillPdf);
