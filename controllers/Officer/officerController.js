@@ -623,39 +623,6 @@ exports.getFarmerOrders = async (req, res) => {
     const limit = 10;
     const offset = (page - 1) * limit;
 
-    const { sendEmail } = require('../../utils/mailer');
-
-    exports.SendEmail = async (req, res) => {
-        try {
-            const {
-                email , message , name , phone
-            } = req.body;
-
-            if (!email || !name || !message || !phone) {
-                return res.status(400).json({
-                    message: "all feilds is required"
-                });
-            }
-
-            await sendEmail(email, message , name , phone)
-            res.status(201).json({
-                message: "mail send successfully",
-                
-            });
-        } catch (err) {
-            console.error("mail send Error:", err);
-            res.status(500).json({
-                error: err.message
-            });
-        }
-    };
-
-
-// ===================== REGISTER OFFICER =====================
-// exports.registerOfficer = async (req, res) => {
-//     const connection = await db.getConnection(); 
-//     try {
-//         await connection.beginTransaction();
     // 1️⃣ Get logged-in user
     const [userRows] = await db.execute(
       `SELECT district_id, block_id, department_id 
@@ -670,16 +637,27 @@ exports.getFarmerOrders = async (req, res) => {
 
     const user = userRows[0];
 
-    // 2️⃣ Base SQL (common)
+    // 2️⃣ Base SQL (✅ FINAL FIXED JOIN)
     let baseSql = `
       FROM users_farmerrequest ufr
-      LEFT JOIN farmer f ON f.farmer_id = ufr.farmer_id
-      LEFT JOIN master_district d ON d.id = f.district_id
-      LEFT JOIN master_block b ON b.id = f.block_id
-      LEFT JOIN master_village v ON v.id = f.village_id
+
+      -- ✅ Map farmer_id → users_customuser
+      LEFT JOIN users_customuser cu 
+        ON cu.id = ufr.farmer_id
+
+      -- ✅ Map user → farmer details
+      LEFT JOIN users_farmeraathardetails fad 
+        ON fad.user_id = cu.id
+
+      LEFT JOIN master_district d ON d.id = fad.district_id
+      LEFT JOIN master_block b ON b.id = fad.block_id
+      LEFT JOIN master_village v ON v.id = fad.village_id
+
       LEFT JOIN tn_schema ts ON ts.id = ufr.scheme_id
+
       LEFT JOIN productioncenter_productioncenter pc
         ON pc.id = ufr.production_center_id
+
       WHERE ufr.status = 'billed'
         AND ufr.type = 'scheme'
         AND ufr.payment_type = 'Free of Cost'
@@ -687,64 +665,67 @@ exports.getFarmerOrders = async (req, res) => {
 
     let params = [];
 
-    // 3️⃣ Role filtering (ALL based on Production Center now)
+    // 3️⃣ Role filtering
     if (role === "district_admin") {
-      // ✅ Match with PRODUCTION CENTER's district
       baseSql += ` AND pc.district_id = ?`;
       params.push(user.district_id);
     } else if (role === "block_admin") {
-      // ✅ Match with PRODUCTION CENTER's block
       baseSql += ` AND pc.block_id = ?`;
       params.push(user.block_id);
     } else if (role === "department_admin") {
-      // ✅ Match with PRODUCTION CENTER's department
-      baseSql += `
-        AND ufr.production_center_id IN (
-          SELECT id FROM productioncenter_productioncenter 
-          WHERE department_id = ?
-        )
-      `;
+      baseSql += ` AND pc.department_id = ?`;
       params.push(user.department_id);
     }
 
-    // 4️⃣ Total count
-    const countSql = `SELECT COUNT(*) as total ${baseSql}`;
-    const [[countResult]] = await db.execute(countSql, params);
+    // 4️⃣ Count query
+    const [[countResult]] = await db.execute(
+      `SELECT COUNT(*) as total ${baseSql}`,
+      params
+    );
+
     const totalRecords = countResult.total;
     const totalPages = Math.ceil(totalRecords / limit);
 
-    // 5️⃣ Paginated orders
-    const dataSql = `
+    // 5️⃣ Orders query
+    const [orders] = await db.execute(
+      `
       SELECT 
         ufr.id AS request_id,
         ufr.orderid,
-        ufr.farmer_id,
         ufr.scheme_id,
+        ufr.farmer_id,
         ufr.created_at,
 
-        ts.name AS scheme_name,
+        -- ✅ Farmer details (NOW WORKS)
+        fad.farmer_name,
+        fad.mobile_number,
+        fad.address,
+        fad.aadhar_no,
+        fad.latitude,
+        fad.longitude,
 
-        f.farmer_name,
-        f.mobile_number,
-        f.address,
-
+        -- Location
         d.District_Name,
         b.Block_Name,
         v.village_name,
 
+        -- ✅ FIXED: Map scheme name
+        ts.name AS scheme_name,
+
+        -- Production center
         pc.id AS production_center_id,
         pc.name_of_production_centre,
         pc.complete_address,
-        pc.district_id AS pc_district_id,    -- ✅ Added this
+        pc.district_id AS pc_district_id,
         pc.block_id AS pc_block_id,
         pc.department_id AS pc_department_id
 
       ${baseSql}
       ORDER BY ufr.created_at DESC
       LIMIT ? OFFSET ?
-    `;
-
-    const [orders] = await db.execute(dataSql, [...params, limit, offset]);
+      `,
+      [...params, limit, offset]
+    );
 
     if (!orders.length) {
       return res.json({
@@ -758,7 +739,6 @@ exports.getFarmerOrders = async (req, res) => {
 
     // 6️⃣ Items
     const requestIds = orders.map(o => o.request_id);
-    const itemPlaceholders = requestIds.map(() => '?').join(',');
 
     const [items] = await db.execute(
       `
@@ -770,7 +750,7 @@ exports.getFarmerOrders = async (req, res) => {
         t.name_tamil AS species_name_tamil
       FROM users_farmerrequestitem ufi
       LEFT JOIN tbl_agroforest_trees t ON t.id = ufi.species_id
-      WHERE ufi.request_id IN (${itemPlaceholders})
+      WHERE ufi.request_id IN (${requestIds.map(() => '?').join(',')})
       `,
       requestIds
     );
@@ -786,12 +766,11 @@ exports.getFarmerOrders = async (req, res) => {
     let blockAdminMap = {};
 
     if (blockIds.length) {
-      const placeholders = blockIds.map(() => '?').join(',');
-
       const [admins] = await db.execute(
         `SELECT id, block_id, first_name, last_name
          FROM users_customuser
-         WHERE role_id = 6 AND block_id IN (${placeholders})`,
+         WHERE role_id = 6 
+         AND block_id IN (${blockIds.map(() => '?').join(',')})`,
         blockIds
       );
 
@@ -804,124 +783,32 @@ exports.getFarmerOrders = async (req, res) => {
       });
     }
 
-    // 8️⃣ Inspections + uploads + saplings
+    // 8️⃣ Inspections
     const orderIds = orders.map(o => o.orderid);
     let inspectionMap = {};
 
     if (orderIds.length) {
-      const placeholders = orderIds.map(() => '?').join(',');
-
       const [inspections] = await db.execute(
-        `SELECT * FROM inspections WHERE order_id IN (${placeholders})`,
+        `SELECT * FROM inspections 
+         WHERE order_id IN (${orderIds.map(() => '?').join(',')})`,
         orderIds
       );
 
-      if (inspections.length) {
-        const inspectionIds = inspections.map(i => i.id);
-        const uploadPlaceholders = inspectionIds.map(() => '?').join(',');
+      inspections.forEach(ins => {
+        if (!inspectionMap[ins.order_id]) inspectionMap[ins.order_id] = [];
 
-        const [uploads] = await db.execute(
-          `SELECT * FROM inspection_uploads WHERE inspection_id IN (${uploadPlaceholders})`,
-          inspectionIds
-        );
-
-        let uploadMap = {};
-        let uploadIds = [];
-        let inspectorIds = new Set();
-        const baseUrl = `${req.protocol}://${req.get("host")}`;
-
-        uploads.forEach(u => {
-          uploadIds.push(u.id);
-          if (u.inspected_by) inspectorIds.add(u.inspected_by);
-
-          if (!uploadMap[u.inspection_id]) uploadMap[u.inspection_id] = [];
-
-          uploadMap[u.inspection_id].push({
-            id: u.id,
-            verification_status: u.verification_status,
-            image: u.image ? `${baseUrl}/uploads/${u.image}` : null,
-            created_at: u.created_at,
-            reason_for_reject:
-              u.verification_status === "rejected"
-                ? u.reason_for_reject
-                : null,
-            inspection_address: u.inspection_address,
-            latitude: u.latitude,
-            longitude: u.longitude,
-            survey_count: u.survey_count,
-            inspected_by: u.inspected_by,
-            inspected_by_name: null,
-            saplings: []
-          });
+        inspectionMap[ins.order_id].push({
+          id: ins.id,
+          farmer_id: ins.farmer_id,
+          block_admin_id: ins.block_admin_id,
+          inspection_scheduled_date: ins.inspection_scheduled_date,
+          remarks: ins.remarks,
+          completed_inspection_session: ins.completed_inspection_session,
+          next_inspection_date: ins.next_inspection_date,
+          created_at: ins.created_at,
+          uploads: []
         });
-
-        // inspector names
-        let inspectorMap = {};
-        if (inspectorIds.size) {
-          const ids = Array.from(inspectorIds);
-          const placeholders = ids.map(() => '?').join(',');
-
-          const [inspectors] = await db.execute(
-            `SELECT id, first_name, last_name FROM users_customuser WHERE id IN (${placeholders})`,
-            ids
-          );
-
-          inspectors.forEach(i => {
-            inspectorMap[i.id] = `${i.first_name} ${i.last_name || ''}`.trim();
-          });
-        }
-
-        // attach inspector names
-        Object.keys(uploadMap).forEach(insId => {
-          uploadMap[insId].forEach(u => {
-            u.inspected_by_name = inspectorMap[u.inspected_by] || null;
-          });
-        });
-
-        // saplings 
-        let saplingMap = {};
-        if (uploadIds.length) {
-          const placeholders = uploadIds.map(() => '?').join(',');
-
-          const [saplings] = await db.execute(
-            `SELECT * FROM inspection_sapplings WHERE upload_id IN (${placeholders})`,
-            uploadIds
-          );
-
-          saplings.forEach(s => {
-            if (!saplingMap[s.upload_id]) saplingMap[s.upload_id] = [];
-            saplingMap[s.upload_id].push({
-              id: s.id,
-              sapling_name: s.sappling_name,
-              survey_count: s.survey_count
-            });
-          });
-        }
-
-        // attach saplings
-        Object.keys(uploadMap).forEach(insId => {
-          uploadMap[insId].forEach(u => {
-            u.saplings = saplingMap[u.id] || [];
-          });
-        });
-
-        // group inspections
-        inspections.forEach(ins => {
-          if (!inspectionMap[ins.order_id]) inspectionMap[ins.order_id] = [];
-
-          inspectionMap[ins.order_id].push({
-            id: ins.id,
-            farmer_id: ins.farmer_id,
-            block_admin_id: ins.block_admin_id,
-            inspection_scheduled_date: ins.inspection_scheduled_date,
-            remarks: ins.remarks,
-            completed_inspection_session: ins.completed_inspection_session,
-            next_inspection_date: ins.next_inspection_date,
-            created_at: ins.created_at,
-            uploads: uploadMap[ins.id] || []
-          });
-        });
-      }
+      });
     }
 
     // 9️⃣ Final response
@@ -929,20 +816,23 @@ exports.getFarmerOrders = async (req, res) => {
       order_id: order.orderid,
       order_date: order.created_at,
 
-      scheme: {
-        id: order.scheme_id,
-        name: order.scheme_name
-      },
+      scheme: order.scheme_id
+        ? {
+            id: order.scheme_id,
+            name: order.scheme_name || "Unknown Scheme"  // Fix for null scheme name
+        }
+        : null,
 
+      // ✅ FINAL (NO NULL)
       farmer: order.farmer_id
         ? {
-            id: order.farmer_id,
+            id: order.farmer_id, // 82
             name: order.farmer_name,
             mobile: order.mobile_number,
             address: order.address,
             location: {
               district: order.District_Name,
-              block: order.Block_Name,  
+              block: order.Block_Name,
               village: order.village_name
             }
           }
@@ -953,16 +843,13 @@ exports.getFarmerOrders = async (req, res) => {
             id: order.production_center_id,
             name: order.name_of_production_centre,
             address: order.complete_address,
-            district_id: order.pc_district_id,    // ✅ Added this
+            district_id: order.pc_district_id,
             block_id: order.pc_block_id,
             department_id: order.pc_department_id
           }
         : null,
 
-      block_admins: order.pc_block_id
-        ? blockAdminMap[order.pc_block_id] || []
-        : [],
-
+      block_admins: blockAdminMap[order.pc_block_id] || [],
       inspections: inspectionMap[order.orderid] || [],
       items: itemsMap[order.request_id] || []
     }));
@@ -976,7 +863,7 @@ exports.getFarmerOrders = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("ERROR:", err);
     res.status(500).json({ message: "Server Error" });
   }
 };
@@ -1075,18 +962,15 @@ exports.approveInspection = async (req, res) => {
         let currentSession = inspection.completed_inspection_session || 0;
         let newSession = currentSession + 1;
 
-        let nextDate = null;
-        let message = "";
+        // --- RESTRICTION REMOVED ---
+        // We no longer check if newSession < 3. 
+        // We always increment the session and schedule the next date.
+        
+        let date = new Date();  
+        date.setMonth(date.getMonth() + 3);
+        let nextDate = date.toISOString().split('T')[0];
 
-        if (newSession < 3) {
-            let date = new Date();  
-            date.setMonth(date.getMonth() + 3);
-            nextDate = date.toISOString().split('T')[0];
-
-            message = `Session ${newSession} completed. Next inspection scheduled.`;
-        } else {
-            message = `All 3 sessions completed.`;
-        }
+        let message = `Session ${newSession} completed. Next inspection scheduled.`;
 
         // 4. Update inspection (remarks + reminder)
         await db.query(
@@ -1185,9 +1069,7 @@ exports.uploadInspectionDetails = async (req, res) => {
         ]);
    
       
-        const uploadId = result[0].insertId;
-       console.log("upload id",uploadId);
-       
+      const uploadId = result[0].insertId;
         // Insert sapplings (if provided)
         if (sapplings && Array.isArray(sapplings)) {
             const sapplingValues = sapplings.map(item => [
@@ -1213,3 +1095,118 @@ exports.uploadInspectionDetails = async (req, res) => {
         return res.status(500).json({ message: "Server error" });
     }
 };
+
+
+// id
+// mobile_number
+// aadhar_no
+// farmer_name
+// district_id
+// block_id
+// village_id
+// address
+// created_at
+// updated_at
+// species_preferred
+// Stores list of tree IDs, e.g., [1, 2, 3]
+// purpose
+// type
+// department_id
+// farmer_id
+// latitude
+// longitude
+// non_farmer_id
+// user_id, this is my users_farmeraathardetails table name and data,
+//  "farmer": {
+//                 "id": "FAR124",
+//                 "name": "Krishna",
+//                 "mobile": "9874561281",
+//                 "address": "chennai",
+//                 "location": {
+//                     "district": "Madurai",
+//                     "block": "Chithamur",
+//                     "village": "Annavalli"
+//                 }
+//             },, this is my getformerorder controller resposne, i got fomer id and i got null data of former,
+
+// id
+// password
+// last_login
+// is_superuser
+// username
+// first_name
+// last_name , this is my users_customuser table name,firsts take the famer id and map into users_farmeraathardetails, use got formet and match that users formerdetails userid, if same then get name adrees mobile number from user farmerdetails,
+
+
+
+
+
+
+// id
+// password
+// is_superuser
+// username
+// last_login
+// first_name
+// last_name
+//this is my users_customuser table  
+// 82
+// 0
+// Jahir Hussain
+// NULL
+// Jahir 
+// Hussain this istha users_customers table data, 
+
+
+// mobile_number
+// id
+// aadhar_no
+// farmer_name
+// district_id
+// block_id
+// village_id
+// address
+// created_at
+// updated_at
+// species_preferred
+// Stores list of tree IDs, e.g., [1, 2, 3]
+// purpose
+// type
+// department_id
+// farmer_id
+// latitude
+// longitude
+// non_farmer_id
+// user_id, this is the users_farmeraathardetails table name and keys,
+	
+// 8925258903
+// 33
+// 989498949894
+// Jahir Hussain
+// 29
+// 149
+// 4249
+// 20/22 North Street , Ganapathipuram , East Tambara...
+// 0000-00-00 00:00:00.000000
+// 0000-00-00 00:00:00.000000
+// NULL
+// NULL
+// farmer
+// NULL
+// NULL
+// 12.92490000
+// 80.10000000
+// NULL
+// 82, see thsi my that users_formers table reatime data.  noy that users_customuser ha s id, and this users_farmerasdatdetaisl table has user_id .
+
+//  "farmer": {
+//                 "id": "82",
+//                 "name": null,
+//                 "mobile": null,
+//                 "address": null,
+//                 "location": {
+//                     "district": null,
+//                     "block": null,
+//                     "village": null
+//                 }
+//             },, this is whtt i fo as null omer data, i want like, map foemr id to user_formeraadhardetails fo get name mobie and dress

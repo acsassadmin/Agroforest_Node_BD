@@ -9,9 +9,14 @@ const PORT = 3001;
 
 // ✅ SSL CERT PATHS (IMPORTANT: keep double backslashes OR use /)
 const sslOptions = {
-  key: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.key"),
-  cert: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.crt"),
+  key: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.key"),
+  cert: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.crt"),
 };
+
+// const sslOptions = {
+//   key: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.key"),
+//   cert: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.crt"),
+// };
 
 app.use(cors());
 app.use(express.json());
@@ -32,9 +37,7 @@ const targetDistrictRoutes = require('./routes/targetdistrict');
 const targetBlockRoutes = require('./routes/targetblock');
 const targetProductionCenterRoutes = require('./routes/targetproductioncenter');
 const masterRoutes = require("./routes/master");
-const former = require("./routes/former")
-
-
+const former = require("./routes/former");
 
 app.use('/users', userRoutes);
 app.use('/center', centerRoutes);
