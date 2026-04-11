@@ -466,7 +466,8 @@ exports.deleteProductionCenter = async (req, res) => {
 exports.getNearbyProductionCenters = async (req, res) => {
   try {
     const { farmer_id } = req.query;
-
+    console.log("former id",farmer_id);
+   
     if (!farmer_id) {
       return res.status(400).json({ error: "Farmer ID is required" });
     }
@@ -475,7 +476,8 @@ exports.getNearbyProductionCenters = async (req, res) => {
       `SELECT latitude, longitude FROM users_farmeraathardetails WHERE user_id = ?`,
       [farmer_id]
     );
-
+     console.log(farmers);
+     
     if (farmers.length === 0) {
       return res.status(404).json({ error: "Farmer not found" });
     }
@@ -543,7 +545,8 @@ exports.getNearbyProductionCenters = async (req, res) => {
       if (distA !== distB) return distA - distB;
       return a.id - b.id;
     });
-
+    console.log("result",result);
+    
     return res.json({
       count: result.length,
       results: result

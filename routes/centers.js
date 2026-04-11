@@ -18,7 +18,7 @@ router.put('/production-centers/', authenticateToken, prodController.uploadMiddl
 router.delete('/production-centers/', authenticateToken, prodController.deleteProductionCenter);
 
 // -----------getNearbyProductionCenters ---------------
-router.get('/production-centers-nearby/', authenticateToken, prodController.getNearbyProductionCenters);
+router.get('/production-centers-nearby/', prodController.getNearbyProductionCenters);
 
 //report
 router.get('/district-summary/',  prodController.getDistrictSummary);

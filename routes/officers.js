@@ -50,7 +50,7 @@ const upload = require('../Multer/upload');
 // Officer routes
 router.get('/officer', officerController.getOfficers);
 router.get('/officer/:id', officerController.getOfficerById);
-router.post('/register-officer', officerController.registerOfficer); // Fixed typo
+router.post('/register-officer', officerController.registerOfficer); 
 router.put('/officer/:id', officerController.updateOfficer);
 router.delete('/officer/:id', officerController.deleteOfficer);
 
