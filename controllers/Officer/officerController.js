@@ -4,52 +4,88 @@ const bcrypt = require("bcrypt");
 
 const redisClient = require('../../redisClient');
 
+// Helper function to format JS Date to MySQL DATETIME
+// Helper function to format date for MySQL (assuming this wasn't imported, defining it here to be safe)
+const toMySQLDatetime = (date) => {
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+};
+// --- GET OFFICER BY ID (For Edit) ---
+exports.getOfficerById = async (req, res) => {
+    try {
+        const { id } = req.params;
 
-// Get all officers
+        // SQL Query remains unchanged as requested
+        // It returns raw data: Mobile (Number), Gender (Number)
+        const query = `
+            SELECT 
+                od.id,
+                od.\`officer name\` AS officerName,
+                od.Gender,
+                od.Mobile AS mobile,
+                od.Email AS email,
+                d.id AS department,
+                d.name AS departmentName,
+                des.id AS designation,
+                des.name AS designationName,
+                r.id AS role,
+                r.name AS roleName,
+                dist.id AS district_id,
+                dist.District_Name AS districtName,
+                block.id AS block_id,
+                block.Block_Name AS blockName
+            FROM officer_details od
+            LEFT JOIN department d ON od.Department = d.id
+            LEFT JOIN designation des ON od.Designation = des.id
+            LEFT JOIN users_role r ON od.role = r.id
+            LEFT JOIN master_district dist ON od.district_id = dist.id
+            LEFT JOIN master_block block ON od.block_id = block.id
+            WHERE od.id = ?
+        `;
+
+        const [rows] = await db.query(query, [id]);
+
+        if (!rows.length) {
+            return res.status(404).json({ message: "Officer not found" });
+        }
+
+        // We return the raw data. The Frontend will handle the Number -> String conversion.
+        res.json(rows[0]);
+    } catch (err) {
+        console.error("Get Officer By ID Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+// --- GET ALL OFFICERS (List) ---
 exports.getOfficers = async (req, res) => {
     try {
-        // 1. Get Pagination and Filter params
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
-        
-        // CHANGE: Expecting role_id from frontend
         const roleIdFilter = req.query.role_id; 
 
-        // 2. Setup Filtering Condition
         let whereClause = '';
         const queryParams = [];
 
         if (roleIdFilter) {
-            // Filter directly by the role ID column in officer_details
             whereClause = 'WHERE od.role = ?';
             queryParams.push(roleIdFilter);
         }
 
-        // 3. Data Query
-        // Note: I removed the comment that caused the syntax error
+        // Query remains unchanged
         const dataQuery = `
             SELECT 
                 od.id,
                 od.\`officer name\` AS officerName,
-                
-                CASE od.Gender 
-                    WHEN 1 THEN 'Male' 
-                    WHEN 2 THEN 'Female' 
-                    ELSE 'Other' 
-                END AS gender,
-                
-                od.Mobile AS mobile,
+                od.Gender,
+                u.phone AS mobile,
                 od.Email AS email,
-                
                 d.name AS department,
                 des.name AS designation,
                 r.name AS role,
                 u.username AS username,
-                
+                u.id AS userId,
                 dist.District_Name AS districtName,
                 block.Block_Name AS blockName,
-
                 cb.username AS createdBy,
                 od.created_at AS createdAt
             FROM officer_details od
@@ -60,25 +96,20 @@ exports.getOfficers = async (req, res) => {
             LEFT JOIN master_district dist ON od.district_id = dist.id
             LEFT JOIN master_block block ON od.block_id = block.id
             LEFT JOIN users_customuser cb ON od.created_by = cb.id
-            
             ${whereClause}
-            
             ORDER BY od.id DESC
             LIMIT ? OFFSET ?;
         `;
 
-        // 4. Count Query
         const countQuery = `
             SELECT COUNT(*) as total 
             FROM officer_details od
             ${whereClause}
         `;
 
-        // Prepare parameters
         const dataParams = [...queryParams, limit, offset];
         const countParams = [...queryParams];
 
-        // Execute queries
         const [officersResult, countResult] = await Promise.all([
             db.query(dataQuery, dataParams),
             db.query(countQuery, countParams)
@@ -87,24 +118,18 @@ exports.getOfficers = async (req, res) => {
         const officers = officersResult[0];
         const totalItems = countResult[0][0].total;
         const totalPages = Math.ceil(totalItems / limit);
-
-        // 5. Redis Caching
-        const cacheKey = `officers:page:${page}:limit:${limit}:role:${roleIdFilter || 'all'}`;
+        console.log(officers);
         
-        // (Optional: Check Redis cache here before querying DB if you want read-cache logic)
+        // We format Gender/Mobile here only for the LIST view.
+        // For the EDIT view, getOfficerById sends raw data.
+        const formattedOfficers = officers.map(officer => ({
+            ...officer,
+            gender: officer.Gender == 1 ? 'Male' : (officer.Gender == 2 ? 'Female' : 'Other'),
+            mobile: String(officer.mobile || '')
+        }));
         
-        try {
-            // Store in cache
-            await redisClient.set(cacheKey, JSON.stringify({
-                data: officers,
-                pagination: { totalItems, totalPages, currentPage: page, itemsPerPage: limit }
-            }), { EX: 3600 });
-        } catch (redisError) {
-            console.error("Redis Write Error:", redisError);
-        }
-
         res.json({
-            data: officers,
+            data: formattedOfficers,
             pagination: {
                 totalItems: totalItems,
                 totalPages: totalPages,
@@ -118,37 +143,7 @@ exports.getOfficers = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
-
-// Get officer by ID
-exports.getOfficerById = async (req, res) => {
-    try {
-        const {
-            id
-        } = req.params;
-        const [officer] = await db.query('SELECT * FROM officer_details WHERE id = ?', [id]);
-
-        if (!officer.length) {
-            return res.status(404).json({
-                message: "Officer not found"
-            });
-        }
-
-        res.json(officer[0]);
-    } catch (err) {
-        console.error("Get Officer By ID Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
-    }
-};
-
-
-
-// Helper function to format JS Date to MySQL DATETIME
-function toMySQLDatetime(date) {
-    return new Date(date).toISOString().slice(0, 19).replace('T', ' ');
-}
-
+// --- REGISTER OFFICER ---
 exports.registerOfficer = async (req, res) => {
     const connection = await db.getConnection(); 
     try {
@@ -167,24 +162,33 @@ exports.registerOfficer = async (req, res) => {
             created_by,
             created_at
         } = req.body;
-
-        // Check required fields
-        if (!mobile ||!email) {
+        console.log(officername,
+            gender,
+            mobile,
+            email,
+            department,
+            designation,
+            role,
+            district_id,
+            block_id,
+            created_by,
+            created_at);
+        
+        if (!mobile || !email) {
             await connection.rollback();
-            return res.status(400).json({ message: "Mobile or email is required" });
+            return res.status(400).json({ message: "Mobile and email are required" });
         }
 
-        // Check if user already exists
-        const [existingUser] = await connection.query(
-            'SELECT id FROM users_customuser WHERE phone = ?',
-            [mobile]
-        );
+       const [existingUser] = await connection.query(
+    'SELECT id FROM users_customuser WHERE phone = ?',
+    [mobile]
+);
+        
         if (existingUser.length > 0) {
             await connection.rollback();
             return res.status(400).json({ message: "User already exists" });
         }
 
-        // Resolve Role ID
         let roleId = null;
         if (role) {
             const [roleRows] = await connection.query(
@@ -194,69 +198,45 @@ exports.registerOfficer = async (req, res) => {
             if (roleRows.length > 0) roleId = roleRows[0].id;
         }
 
-        // Gender as boolean (Male = 1, Female/Other = 0)
-        const genderValue = gender === 'Male' ? 1 : 0;
+        // Gender: 1 for Male, 0 for Female/Other
+        const genderValue = (gender === 'Male' || gender === 1) ? 1 : 0;
+        const now = toMySQLDatetime(new Date());
 
-        // Insert into users_customuser
         const insertUserQuery = `
             INSERT INTO users_customuser 
             (username, email, role_id, is_active, date_joined, is_superuser, is_staff, first_name, last_name, department_id, district_id, block_id, phone)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-        const now = toMySQLDatetime(new Date());
-
         const [userResult] = await connection.query(insertUserQuery, [
-            officername,
-            email,
-            roleId,
-            1,                  // is_active = true
-            now,                // date_joined
-            0,                  // is_superuser
-            0,                  // is_staff
-            officername,        // first_name
-            null,               // last_name
-            department,
-            district_id,
-            block_id,
-            mobile
+            officername, email, roleId, 1, now, 0, 0, officername, null, department, district_id, block_id, mobile
         ]);
 
         const userId = userResult.insertId;
 
-        // Insert into officer_details
         const insertOfficerQuery = `
             INSERT INTO officer_details
             (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`, \`created_by\`, \`created_at\`)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
         await connection.query(insertOfficerQuery, [
-            officername,
-            genderValue,
-            mobile,
-            email,
-            department,
-            designation,
-            roleId,
-            userId,
-            district_id,
-            block_id,
-            created_by || null,
-            created_at ? toMySQLDatetime(created_at) : now
+            officername, genderValue, mobile, email, department, designation, roleId, userId, district_id, block_id, created_by || null, created_at ? toMySQLDatetime(new Date(created_at)) : now
         ]);
 
         await connection.commit();
-        res.status(201).json({ message: "Officer registered", user_id: userId });
+        res.status(201).json({ message: "Officer registered successfully", user_id: userId });
 
     } catch (err) {
         await connection.rollback();
-        console.error("Error:", err);
+        console.error("Registration Error:", err);
+        if (err.code === 'ER_NO_REFERENCED_ROW_2') {
+             return res.status(400).json({ message: "Invalid Reference: Selected Department, Designation, Role, or District does not exist." });
+        }
         res.status(500).json({ error: err.message });
     } finally {
         connection.release();
     }
 };
-
-// Update officer (users_customuser + officer_details)
+// --- UPDATE OFFICER ---
 exports.updateOfficer = async (req, res) => {
   const connection = await db.getConnection();
   try {
@@ -264,137 +244,89 @@ exports.updateOfficer = async (req, res) => {
 
     const { id } = req.params;
     const {
-      officername,
-      gender,
-      mobile,
-      email,
-      department,
-      designation,
-      role,          // Role ID from frontend
-      district_id,   // for users_customuser
-      block_id       // for users_customuser
+      officername, gender, mobile, email, department, designation, role, district_id, block_id
     } = req.body;
 
-    // 1. Find officer_details to get the linked User ID
     const [officerRows] = await connection.query(
-      'SELECT id, Username FROM officer_details WHERE id = ?', [id]
+      'SELECT Username FROM officer_details WHERE id = ?', [id]
     );
     if (!officerRows.length) {
       await connection.rollback();
       return res.status(404).json({ message: "Officer not found" });
     }
-    const officerDetail = officerRows[0];
-    const userId = officerDetail.Username;
+    const userId = officerRows[0].Username;
 
-    // 2. Prepare data for officer_details
-    const genderValue = gender === 'Male' ? 1 : 0;
-    const roleId = role; // Use role ID directly from frontend
+    const [roleRows] = await connection.query(
+        'SELECT id FROM users_role WHERE id = ? OR name = ?', [role, role]
+    );
+    const roleId = roleRows.length > 0 ? roleRows[0].id : null;
+
+    // Gender Logic
+    const genderValue = (gender === 'Male' || gender === 1) ? 1 : 0;
 
     const updateOfficerQuery = `
       UPDATE officer_details 
-      SET 
-        \`officer name\` = ?, 
-        \`Gender\` = ?,
-        \`Mobile\` = ?,
-        \`Email\` = ?,
-        \`Department\` = ?,
-        \`Designation\` = ?,
-        \`role\` = ?,
-        \`Username\` = ?,
-        \`district_id\` = ?,
-        \`block_id\` = ?
+      SET \`officer name\` = ?, \`Gender\` = ?, \`Mobile\` = ?, \`Email\` = ?, \`Department\` = ?, \`Designation\` = ?, \`role\` = ?, \`district_id\` = ?, \`block_id\` = ?
       WHERE id = ?`;
 
     await connection.query(updateOfficerQuery, [
-      officername,
-      genderValue,
-      mobile,
-      email,
-      department,
-      designation,
-      roleId,
-      userId,
-      district_id || null,
-      block_id || null,
-      id
+      officername, genderValue, mobile, email, department, designation, roleId, district_id || null, block_id || null, id
     ]);
 
-    // 3. Update users_customuser (no password, username = officername)
     const updateUserQuery = `
       UPDATE users_customuser 
-      SET 
-        username = ?,
-        email = ?,
-        department_id = ?,
-        district_id = ?,
-        block_id = ?,
-        role_id = ?
+      SET username = ?, email = ?, department_id = ?, district_id = ?, block_id = ?, role_id = ?, phone = ?
       WHERE id = ?`;
 
     await connection.query(updateUserQuery, [
-      officername,
-      email,
-      department,
-      district_id || null,
-      block_id || null,
-      roleId,
-      userId
+      officername, email, department, district_id || null, block_id || null, roleId, mobile, userId
     ]);
 
     await connection.commit();
     res.json({ message: "Officer updated successfully" });
   } catch (err) {
     await connection.rollback();
-    console.error("Update Officer Error:", err);
+    console.error("Update Error:", err);
     res.status(500).json({ error: err.message });
   } finally {
     connection.release();
   }
 };
-
-
+// --- DELETE OFFICER ---
 exports.deleteOfficer = async (req, res) => {
-  const connection = await db.getConnection();
-  try {
-    await connection.beginTransaction();
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        const { id } = req.params;
 
-    const { id } = req.params;
+        const [officerData] = await connection.query(
+            'SELECT Username FROM officer_details WHERE id = ?', [id]
+        );
 
-    // 1. Find the User ID associated with this officer
-    const [officerRows] = await connection.query(
-      'SELECT Username FROM officer_details WHERE id = ?', [id]
-    );
-    
-    if (!officerRows.length) {
-      await connection.rollback();
-      return res.status(404).json({ message: "Officer not found" });
+        if (!officerData.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: "Officer not found" });
+        }
+
+        const userId = officerData[0].Username;
+
+        await connection.query('DELETE FROM officer_details WHERE id = ?', [id]);
+
+        if (userId) {
+            await connection.query('DELETE FROM users_customuser WHERE id = ?', [userId]);
+        }
+
+        await connection.commit();
+        res.json({ message: "Officer deleted successfully" });
+
+    } catch (err) {
+        await connection.rollback();
+        console.error("Delete Error:", err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        connection.release();
     }
-    
-    const userId = officerRows[0].Username;
-
-    // 2. Delete from officer_details
-    // This removes their specific officer permissions/data
-    const deleteOfficerQuery = 'DELETE FROM officer_details WHERE id = ?';
-    await connection.query(deleteOfficerQuery, [id]);
-
-    // 3. SOFT DELETE the user (Update is_active to 0)
-    // This prevents login but keeps their ID in history tables (like created_by)
-    const softDeleteUserQuery = 'UPDATE users_customuser SET is_active = 0 WHERE id = ?';
-    await connection.query(softDeleteUserQuery, [userId]);
-
-    await connection.commit();
-
-    res.json({ message: "Officer deleted and user deactivated successfully" });
-
-  } catch (err) {
-    await connection.rollback();
-    console.error("Delete Officer Error:", err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    connection.release();
-  }
 };
-
 // GET all departments
 exports.getDepartments = async (req, res) => {
     try {
@@ -409,7 +341,6 @@ exports.getDepartments = async (req, res) => {
         });
     }
 };
-
 // CREATE department
 exports.createDepartment = async (req, res) => {
     try {
@@ -473,7 +404,6 @@ exports.updateDepartment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // DELETE department
 exports.deleteDepartment = async (req, res) => {
   try {
@@ -498,9 +428,7 @@ exports.deleteDepartment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // ===================== DESIGNATIONS =====================
-
 // GET all designations
 exports.getDesignation = async (req, res) => {
   try {
@@ -614,7 +542,6 @@ exports.getUsernames = async (req, res) => {
         });
     }
 };
-
 // exports.assignInspection = async (req, res) => {
 
 //   try {
@@ -715,7 +642,8 @@ exports.rejectInspection = async (req, res) => {
     try {
         const inspectionId = req.params.id;
         const { reason_for_reject } = req.body; 
-
+        console.log(reason_for_reject,inspectionId);
+        
         // 1. Find the LATEST pending upload for this inspection
         const [uploads] = await db.query(`
             SELECT id FROM inspection_uploads 
@@ -774,7 +702,8 @@ exports.getFarmerOrders = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-
+    console.log(user_id,role);
+    
     const [userRows] = await db.execute(
       `SELECT district_id, block_id, department_id FROM users_customuser WHERE id = ?`,
       [user_id]
@@ -806,6 +735,7 @@ exports.getFarmerOrders = async (req, res) => {
     const [orders] = await db.execute(`
       SELECT ufr.id AS request_id, ufr.orderid, ufr.farmer_id, ufr.created_at,
         fad.farmer_name, fad.mobile_number, fad.address,
+        fad.latitude AS farmer_latitude, fad.longitude AS farmer_longitude, 
         d.District_Name, b.Block_Name, v.village_name,
         pc.id AS production_center_id, pc.name_of_production_centre, pc.complete_address,
         pc.district_id AS pc_district_id, pc.block_id AS pc_block_id, pc.department_id AS pc_department_id
@@ -909,8 +839,9 @@ exports.getFarmerOrders = async (req, res) => {
       order_date: order.created_at, 
       scheme: schemeMap[order.request_id] || null,
       farmer: order.farmer_id ? { 
-        id: order.farmer_id, name: order.farmer_name, mobile: order.mobile_number, address: order.address, 
-        location: { district: order.District_Name, block: order.Block_Name, village: order.village_name } 
+      id: order.farmer_id, name: order.farmer_name, mobile: order.mobile_number, address: order.address, 
+      location: { district: order.District_Name, block: order.Block_Name, village: order.village_name,latitude: order.farmer_latitude,
+      longitude: order.farmer_longitude } 
       } : null,
       production_center: order.production_center_id ? { 
         id: order.production_center_id, name: order.name_of_production_centre, address: order.complete_address, 
@@ -951,8 +882,22 @@ exports.uploadInspectionDetails = async (req, res) => {
     const image = req.file.filename;
 
     // 1. Insert into inspection_uploads
-    const sql = `INSERT INTO inspection_uploads (inspection_id, image, inspection_address, latitude, longitude, survey_count, inspected_by) VALUES (?, ?, ?, ?, ?, ?, ?)`;
-    const result = await db.query(sql, [inspection_id, image, inspection_address, latitude, longitude, survey_count, inspected_by]);
+     const sql = `INSERT INTO inspection_uploads 
+      (inspection_id, image, reason_for_reject, inspection_address, latitude, longitude, survey_count, inspected_by) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    // ✅ FIXED: 3rd value is now '' instead of nothing
+    const result = await db.query(sql, [
+      inspection_id, 
+      image, 
+      '',  // <-- empty string for reason_for_reject
+      inspection_address, 
+      latitude, 
+      longitude, 
+      survey_count, 
+      inspected_by
+    ]);
+    
     const uploadId = result[0].insertId;
 
     // 2. Parse sapplings JSON string from frontend
@@ -992,7 +937,7 @@ exports.uploadInspectionDetails = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
-////
+// assign inspection
 exports.assignInspection = async (req, res) => {
   try {
     const { orderid, block_admin_id, inspection_scheduled_date, remarks } = req.body;
@@ -1020,9 +965,9 @@ exports.assignInspection = async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 0)`,
       [request_id, farmer_id, block_admin_id, inspection_scheduled_date, remarks || null]
     );
-
+      
     return res.json({
-      success: true,
+      success: true,                       
       message: "Inspection assigned successfully",
       inspection_id: result.insertId
     });
@@ -1030,5 +975,238 @@ exports.assignInspection = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+// get all schems
+exports.getSchemes = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50; // Increased limit for master data lists
+    const offset = (page - 1) * limit;
+
+    console.log("Fetching Schemes List");
+
+    // 1. Base SQL
+    // Since schemes are global (not filtered by district/block/role), we just select all
+    const baseSql = `FROM tn_schema`;
+
+    // 2. Pagination Count
+    const [[countResult]] = await db.execute(`SELECT COUNT(*) as total ${baseSql}`);
+    const totalRecords = countResult.total;
+    const totalPages = Math.ceil(totalRecords / limit);
+
+    // 3. Fetch Data
+    // Getting ID, Name, and the other columns from your table description
+    const [schemes] = await db.execute(`
+      SELECT 
+        id, 
+        name, 
+        percentage, 
+        species_preferred
+      ${baseSql} 
+      ORDER BY id ASC 
+      LIMIT ? OFFSET ?
+    `, [limit, offset]);
+
+    // 4. Format Response
+    const result = schemes.map(s => ({
+      id: s.id,
+      name: s.name,
+      percentage: s.percentage,
+      species_preferred: s.species_preferred
+    }));
+
+    return res.json({ 
+      success: true, 
+      total_records: totalRecords, 
+      total_pages: totalPages, 
+      current_page: page, 
+      data: result 
+    });
+
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({ message: "Server Error", err });
+  }
+};
+// get production center
+exports.getProductionCenters = async (req, res) => {
+  try {
+    const user_id = req.params.userid;
+    const role = req.params.role;
+    
+    console.log("Fetching Production Centers for:", user_id, role);
+    
+    // 1. Get User Details to identify jurisdiction
+    const [userRows] = await db.execute(
+      `SELECT district_id, block_id, department_id FROM users_customuser WHERE id = ?`,
+      [user_id]
+    );
+
+    if (!userRows.length) return res.status(404).json({ message: "User not found" });
+    const user = userRows[0];
+
+    // 2. Base Query
+    // We LEFT JOIN the 'production_center_schemes' table to include assigned schemes
+    let baseSql = `
+      FROM productioncenter_productioncenter pc
+      LEFT JOIN production_center_schemes pcs ON pc.id = pcs.production_center_id
+      WHERE pc.status = 'approved' 
+      AND pc.production_type = 'private' 
+    `;
+    
+    // Grouping is required because of the Left Join with schemes
+    let groupSql = ` GROUP BY pc.id `; 
+
+    let params = [];
+
+    // 3. Apply Role-Based Filtering
+    if (role === "district_admin") { 
+      baseSql += ` AND pc.district_id = ?`; 
+      params.push(user.district_id); 
+    } else if (role === "block_admin") { 
+      baseSql += ` AND pc.block_id = ?`; 
+      params.push(user.block_id); 
+    } else if (role === "department_admin") { 
+      baseSql += ` AND pc.department_id = ?`; 
+      params.push(user.department_id); 
+    }
+
+    // 4. Fetch Data
+    // FIX: Replaced 'contact_number' with 'contact_person' & 'mobile_number'
+    // FIX: Removed 'email' as it doesn't exist in your DB
+    const [centers] = await db.execute(`
+      SELECT 
+        pc.id, 
+        pc.name_of_production_centre, 
+        pc.complete_address,
+        pc.production_center_code,
+        pc.contact_person,
+        pc.mobile_number,
+        GROUP_CONCAT(pcs.scheme_id) as scheme_ids
+      ${baseSql} 
+      ${groupSql}
+      ORDER BY pc.id DESC
+    `, params);
+
+    // 5. Format the result for the Frontend
+    // Convert comma-separated string "1,2" to Array [1,2]
+    const result = centers.map(pc => ({
+      ...pc,
+      scheme_ids: pc.scheme_ids ? pc.scheme_ids.split(',').map(Number) : []
+    }));
+
+    return res.json({ 
+      success: true, 
+      data: result 
+    });
+
+  } catch (err) {
+    console.error("ERROR fetching production centers:", err);
+    res.status(500).json({ message: "Server Error", err });
+  }
+};
+// ============
+exports.getAllSchemes = async (req, res) => {
+  try {
+    // Simple fetch of all active schemes
+    const [schemes] = await db.execute(`
+      SELECT id, name, percentage, species_preferred 
+      FROM tn_schema 
+      ORDER BY name ASC
+    `);
+
+    return res.json({ 
+      success: true, 
+      data: schemes 
+    });
+
+  } catch (err) {
+    console.error("ERROR fetching schemes:", err);
+    res.status(500).json({ message: "Server Error", err });
+  }
+};
+// 
+exports.assignSchemes = async (req, res) => {
+  const connection = await db.getConnection(); 
+  try {
+    const { center_id, scheme_ids } = req.body;
+
+    if (!center_id) {
+      return res.status(400).json({ message: "Production Center ID is required" });
+    }
+
+    // Start Transaction (Ensures data integrity)
+    await connection.beginTransaction();
+
+    // 1. Remove all existing schemes for this center
+    await connection.execute(
+      `DELETE FROM production_center_schemes WHERE production_center_id = ?`,
+      [center_id]
+    );
+
+    // 2. Insert new schemes if provided
+    if (scheme_ids && scheme_ids.length > 0) {
+      // Create bulk insert values: (center_id, scheme_id_1), (center_id, scheme_id_2)...
+      const values = scheme_ids.map(schemeId => [center_id, schemeId]);
+      
+      // Insert multiple rows at once
+      await connection.query(
+        `INSERT INTO production_center_schemes (production_center_id, scheme_id) VALUES ?`,
+        [values]
+      );
+    }
+
+    await connection.commit(); // Commit changes
+
+    return res.json({ 
+      success: true, 
+      message: "Schemes assigned successfully!" 
+    });
+
+  } catch (err) {
+    await connection.rollback(); // Rollback on error
+    console.error("ERROR assigning schemes:", err);
+    res.status(500).json({ message: "Server Error", err });
+  } finally {
+    connection.release(); // Release connection back to pool
+  }
+};
+// 
+exports.getPrivateValidSchemes = async (req, res) => {
+  try {
+    // Get production_center_id from URL parameters
+    const { id: production_center_id } = req.params;
+
+    if (!production_center_id) {
+      return res.status(400).json({ message: "Production Center ID is required" });
+    }
+
+    const sql = `
+      SELECT DISTINCT 
+        ts.id, 
+        ts.name, 
+        ts.percentage, 
+        ts.species_preferred
+      FROM tn_schema ts
+      JOIN production_center_schemes pcs ON ts.id = pcs.scheme_id
+      JOIN target_productioncenter tp ON ts.id = tp.scheme_id
+      WHERE pcs.production_center_id = ?
+        AND tp.productioncenter_id = ?
+        AND tp.target_quantity > 0
+      ORDER BY ts.name ASC
+    `;
+
+    // We pass the production_center_id twice for both joins
+    const [schemes] = await db.execute(sql, [production_center_id, production_center_id]);
+
+    return res.json({ 
+      success: true, 
+      data: schemes 
+    });
+
+  } catch (err) {
+    console.error("Error fetching private valid schemes:", err);
+    res.status(500).json({ message: "Server Error", err });
   }
 };

@@ -165,7 +165,8 @@ exports.updateTargetDepartment = async (req, res) => {
 exports.getAllTargetDepartments = async (req, res) => {
     try {
         const userId = req.query.user_id;
-
+        console.log("get target dept",userId);
+        
         // Step 1: Get user's role_id and department_id from users_customuser
         const [userRows] = await db.query(
             'SELECT role_id, department_id FROM users_customuser WHERE id = ?',

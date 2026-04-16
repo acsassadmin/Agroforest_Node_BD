@@ -647,7 +647,6 @@ const clearSchemaCache = async () => {
 exports.getScheme = async (req, res) => {
   try {
     const { id } = req.params;
-
     // 1. GET BY ID Logic
     if (id) {
       const [rows] = await db.query('SELECT * FROM tn_schema WHERE id = ?', [id]);
