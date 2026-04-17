@@ -3,6 +3,8 @@ const router = express.Router();
 const prodController = require('../controllers/Production/productionCenterController');
 const distController = require('../controllers/Production/distributionCenterController');
 const stockController = require('../controllers/Production/stockController');
+const productionschemaController = require('../controllers/Production/productionschema');
+
 const authenticateToken = require('../middleware/authMiddleware'); 
 
 // --- Types Routes ---
@@ -68,30 +70,11 @@ router.put('/schema/:id', authenticateToken, stockController.updateScheme);
 router.delete('/schema/:id', authenticateToken, stockController.deleteScheme);
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+router.get('/productioncenter-scheme/', productionschemaController.getProductionSchemes);
+router.post('/productioncenter-scheme/', productionschemaController.createProductionScheme);
+router.put('/productioncenter-scheme/:id', productionschemaController.updateProductionScheme);
+router.delete('/productioncenter-scheme/:id', productionschemaController.deleteProductionScheme);
 
 
 module.exports = router;
-
-
-
-
-
-
-
-
-
 
