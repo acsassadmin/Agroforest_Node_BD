@@ -46,6 +46,7 @@ const express = require('express');
 const router = express.Router();
 const officerController = require('../controllers/Officer/officerController');  // Correct path
 const upload = require('../Multer/upload');
+const { getScheme } = require('../controllers/Production/stockController');
 
 // Officer routes
 router.get('/officer', officerController.getOfficers);
@@ -75,7 +76,7 @@ router.get('/get-formers-orders/:userid/:role', officerController.getFarmerOrder
 router.put('/approve-inspection/:id', officerController.approveInspection);
 router.put('/reject-inspection/:id', officerController.rejectInspection);
 router.post('/upload-inspection-sappling',upload.single("image"), officerController.uploadInspectionDetails);
-router.get("/get-all-schemes", officerController.getSchemes);
+router.get("/get-all-schemes", getScheme);
 router.get("/get-producion-center/:userid/:role",officerController.getProductionCenters);
 router.post("/assign-schemes",officerController.assignSchemes);
 router.get("/get-valid-schemes/:id", officerController.getPrivateValidSchemes);
