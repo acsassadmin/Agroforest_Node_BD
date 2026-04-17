@@ -281,7 +281,190 @@ exports.getAllTargetDepartments = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+// Controller: targetDepartmentController.js
+exports.getAllAllocationSummary = async (req, res) => {
+    try {
+        console.log("==== API HIT ====");
 
+        // ✅ Get user_id safely
+        const userIdRaw = req.query.user_id;
+
+        if (!userIdRaw) {
+            return res.status(400).json({ error: "user_id is required" });
+        }
+
+        const userId = Number(userIdRaw);
+
+        if (isNaN(userId)) {
+            return res.status(400).json({ error: "Invalid user_id" });
+        }
+
+        console.log("userId:", userId);
+
+        // ✅ Get user
+        const [userRows] = await db.query(
+            'SELECT role_id, department_id FROM users_customuser WHERE id = ?',
+            [userId]
+        );
+
+        console.log("userRows:", userRows);
+
+        if (userRows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const { role_id, department_id } = userRows[0];
+
+        // ✅ Get role
+        const [roleRows] = await db.query(
+            'SELECT name FROM users_role WHERE id = ?',
+            [role_id]
+        );
+
+        console.log("roleRows:", roleRows);
+
+        if (roleRows.length === 0) {
+            return res.status(404).json({ error: 'Role not found' });
+        }
+
+        const userRole = roleRows[0].name;
+
+        // ✅ NULL safe condition
+        const nullSafe = "(%COL% IS NULL OR %COL% = 0 OR %COL% = '')";
+
+        const replaceCol = (colName) => nullSafe.replace(/%COL%/g, colName);
+
+        let roleFilter = '';
+        const params = [];
+
+        // ✅ Role-based filter
+        if (userRole === 'department_admin') {
+            if (!department_id) {
+                return res.status(400).json({
+                    error: 'Department admin must have a department assigned'
+                });
+            }
+            roleFilter = 'AND td.department_id = ?';
+            params.push(department_id);
+        }
+
+        // ✅ Main query (cleaned)
+        const query = `
+            SELECT 
+                td.id AS target_id,
+                td.department_id,
+                td.target_quantity AS dept_target,
+                td.financial_year,
+                td.scheme_type,
+                td.scheme_id,
+                d.name AS department_name,
+                s.name AS scheme_name,
+
+                COALESCE(SUM(CASE 
+                    WHEN ${replaceCol('child.block_id')} 
+                     AND ${replaceCol('child.production_center_id')}
+                    THEN child.target_quantity ELSE 0
+                END), 0) AS district_allocated,
+
+                COALESCE(SUM(CASE 
+                    WHEN NOT ${replaceCol('child.block_id')} 
+                     AND ${replaceCol('child.production_center_id')}
+                    THEN child.target_quantity ELSE 0
+                END), 0) AS block_allocated,
+
+                COALESCE(SUM(CASE 
+                    WHEN NOT ${replaceCol('child.production_center_id')}
+                    THEN child.target_quantity ELSE 0
+                END), 0) AS nursery_allocated,
+
+                COALESCE(SUM(child.target_quantity), 0) AS total_allocated
+
+            FROM target_department td
+
+            JOIN department d ON td.department_id = d.id
+            LEFT JOIN tn_schema s ON td.scheme_id = s.id
+
+            LEFT JOIN target_department child ON 
+                child.department_id = td.department_id
+                AND child.financial_year = td.financial_year
+                AND child.scheme_type = td.scheme_type
+                AND (
+                    (td.scheme_id IS NULL AND child.scheme_id IS NULL)
+                    OR
+                    (td.scheme_id IS NOT NULL AND child.scheme_id = td.scheme_id)
+                )
+                AND child.id != td.id
+
+            WHERE 
+                ${replaceCol('td.district_id')}
+                AND ${replaceCol('td.block_id')}
+                AND ${replaceCol('td.production_center_id')}
+                ${roleFilter}
+
+            GROUP BY td.id
+            ORDER BY td.id DESC
+        `;
+
+        console.log("Executing query...");
+
+        const [rows] = await db.query(query, params);
+
+        // ✅ Transform data
+        const enriched = rows.map(row => {
+            const deptTarget = Number(row.dept_target || 0);
+            const allocated = Number(row.total_allocated || 0);
+            const remaining = deptTarget - allocated;
+            const utilizationPercent =
+                deptTarget > 0 ? (allocated / deptTarget) * 100 : 0;
+
+            let status = 'safe';
+            if (remaining < 0) status = 'deficit';
+            else if (utilizationPercent >= 90) status = 'warning';
+
+            return {
+                target_id: row.target_id,
+                department_id: row.department_id,
+                department_name: row.department_name,
+                financial_year: row.financial_year,
+                scheme_type: row.scheme_type,
+                scheme_name: row.scheme_name || null,
+                dept_target: deptTarget,
+                district_allocated: Number(row.district_allocated),
+                block_allocated: Number(row.block_allocated),
+                nursery_allocated: Number(row.nursery_allocated),
+                total_allocated: allocated,
+                remaining,
+                utilization_percent: Math.round(utilizationPercent * 10) / 10,
+                status,
+            };
+        });
+
+        // ✅ Summary
+        const summary = {
+            total_dept_targets: enriched.reduce((s, r) => s + r.dept_target, 0),
+            total_allocated: enriched.reduce((s, r) => s + r.total_allocated, 0),
+            total_remaining: enriched.reduce((s, r) => s + Math.max(r.remaining, 0), 0),
+            total_deficit: enriched.reduce((s, r) => s + Math.min(r.remaining, 0), 0),
+            deficit_count: enriched.filter(r => r.status === 'deficit').length,
+            warning_count: enriched.filter(r => r.status === 'warning').length,
+            safe_count: enriched.filter(r => r.status === 'safe').length,
+            total_records: enriched.length,
+        };
+
+        return res.status(200).json({
+            success: true,
+            data: enriched,
+            summary
+        });
+
+    } catch (err) {
+        console.error("❌ Get All Allocation Summary Error:", err);
+        return res.status(500).json({
+            error: "Internal server error",
+            details: err.message
+        });
+    }
+};
 // ===================== GET TARGET DEPARTMENT BY ID =====================
 exports.getTargetDepartmentById = async (req, res) => {
     try {
