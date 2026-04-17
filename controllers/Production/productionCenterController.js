@@ -157,17 +157,21 @@ exports.getProductionCenters = async (req, res) => {
     const district_ids = parseArrayParam(query.district_ids);
     const block_ids = parseArrayParam(query.block_ids);
 
-    // Role & Scope
+    // --- UPDATED ROLE & SCOPE LOGIC ---
     const role = query.role || user.role;
+    const user_department_id = query.department_id || user.department_id;
     const user_district_id = query.district_id || user.district_id;
     const user_block_id = query.block_id || user.block_id;
 
-    if (!role) return res.status(400).json({ success: false, error: "User role is required." });
 
-    let scopeFilter = 'all';
+    let scopeFilter = null;
     let scopeId = null;
 
-    if (role === 'district_admin') {
+    if (role === 'department_admin') {
+      if (!user_department_id) return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+      scopeFilter = 'department';
+      scopeId = user_department_id;
+    } else if (role === 'district_admin') {
       if (!user_district_id) return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
       scopeFilter = 'district';
       scopeId = user_district_id;
@@ -176,8 +180,9 @@ exports.getProductionCenters = async (req, res) => {
       scopeFilter = 'block';
       scopeId = user_block_id;
     }
+    // If role === 'superadmin', scopeFilter remains null (fetches all)
 
-    // Joins — now include department
+    // Joins
     const joins = `
       JOIN department dpt ON pc.department_id = dpt.id
       JOIN master_district d ON pc.district_id = d.id
@@ -185,7 +190,9 @@ exports.getProductionCenters = async (req, res) => {
       LEFT JOIN master_village v ON pc.village_id = v.id
     `;
 
+    // ==========================================
     // SINGLE ITEM LOGIC
+    // ==========================================
     if (id) {
       let singleQuery = `
         SELECT 
@@ -200,7 +207,11 @@ exports.getProductionCenters = async (req, res) => {
       `;
       const params = [id];
 
-      if (scopeFilter === 'district') {
+      // Apply role filter even to single item requests (Security check)
+      if (scopeFilter === 'department') {
+        singleQuery += ' AND pc.department_id = ?';
+        params.push(scopeId);
+      } else if (scopeFilter === 'district') {
         singleQuery += ' AND pc.district_id = ?';
         params.push(scopeId);
       } else if (scopeFilter === 'block') {
@@ -208,22 +219,28 @@ exports.getProductionCenters = async (req, res) => {
         params.push(scopeId);
       }
 
-      const [centers] = await db.query(singleQuery, params);
+      // Changed to db.execute for safety
+      const [centers] = await db.execute(singleQuery, params);
 
       if (centers.length === 0) return res.status(404).json({ success: false, error: "Production Center not found or access denied" });
 
-      const [certs] = await db.query('SELECT id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id = ?', [id]);
+      const [certs] = await db.execute('SELECT id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id = ?', [id]);
       const formatted = formatCenterData(centers, certs);
 
       return res.json(formatted[0]);
     }
 
+    // ==========================================
     // LIST LOGIC
+    // ==========================================
     let whereClauses = ["1=1"];
     let params = [];
 
-    // Scope Filters
-    if (scopeFilter === 'district') {
+    // --- Scope Filters ---
+    if (scopeFilter === 'department') {
+      whereClauses.push('pc.department_id = ?');
+      params.push(scopeId);
+    } else if (scopeFilter === 'district') {
       whereClauses.push('pc.district_id = ?');
       params.push(scopeId);
     } else if (scopeFilter === 'block') {
@@ -247,7 +264,7 @@ exports.getProductionCenters = async (req, res) => {
       params.push(status);
     }
 
-    // Filter by district_ids / block_ids arrays
+    // Filter by district_ids / block_ids arrays (if passed manually)
     if (district_ids.length > 0) {
       const placeholders = district_ids.map(() => '?').join(',');
       whereClauses.push(`pc.district_id IN (${placeholders})`);
@@ -263,10 +280,11 @@ exports.getProductionCenters = async (req, res) => {
 
     // Total Count
     const countQuery = `SELECT COUNT(*) as total FROM productioncenter_productioncenter pc ${joins} WHERE ${whereString}`;
-    const [countRows] = await db.query(countQuery, params);
+    const [countRows] = await db.execute(countQuery, params);
     const totalCount = countRows[0].total;
 
     // Paginated Data
+        // Paginated Data
     const dataQuery = `
       SELECT 
         pc.*,
@@ -278,20 +296,21 @@ exports.getProductionCenters = async (req, res) => {
       ${joins}
       WHERE ${whereString}
       ORDER BY pc.id DESC
-      LIMIT ? OFFSET ?
+      LIMIT ${limit} OFFSET ${offset}
     `;
-    const dataParams = [...params, limit, offset];
-
-    const [centers] = await db.query(dataQuery, dataParams);
+    // Only pass 'params' here. Limit and offset are now safely in the string above.
+    const [centers] = await db.execute(dataQuery, params);
 
     // Certificates
     const centerIds = centers.map(c => c.id);
     let certs = [];
     if (centerIds.length > 0) {
-      [certs] = await db.query(`SELECT id, production_center_id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id IN (?)`, [centerIds]);
+      // Changed to db.execute
+      [certs] = await db.execute(`SELECT id, production_center_id, certificate_file FROM productioncenter_productioncentercertificate WHERE production_center_id IN (?)`, [centerIds]);
     }
 
     const formatted = formatCenterData(centers, certs);
+    
     res.json({
       total: totalCount,
       page,
@@ -305,6 +324,34 @@ exports.getProductionCenters = async (req, res) => {
   }
 };
 
+exports.getProduction = async (req, res) => {
+  try {
+    const { production_type } = req.query;
+
+    let query = `
+      SELECT 
+        id, 
+        name_of_production_centre AS name, 
+        production_type
+      FROM productioncenter_productioncenter
+    `;
+    const params = [];
+
+    // Optional: Filter by type if provided (e.g., ?production_type=private)
+    if (production_type) {
+      query += ` WHERE production_type = ?`;
+      params.push(production_type);
+    }
+
+    const [centers] = await db.execute(query, params);
+
+    res.json(centers);
+
+  } catch (err) {
+    console.error("Error getProductionCenters:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
 
 exports.createProductionCenter = async (req, res) => {
     const connection = await db.getConnection();

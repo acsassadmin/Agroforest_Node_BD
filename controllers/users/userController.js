@@ -2680,8 +2680,7 @@ exports.getTargetDetails = async (req, res) => {
                     td.id,
                     td.target_tag,
                     td.target_quantity,
-                    td.start_date,
-                    td.end_date,
+                    td.financial_year,
                     td.created_at,
                     d.name AS department_name,
                     u.username AS created_by_name

@@ -701,7 +701,7 @@ exports.getFarmerOrders = async (req, res) => {
     const role = req.params.role;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
+    const offset = Number((page - 1) * limit) || 0; 
     console.log(user_id,role);
     
     const [userRows] = await db.execute(
@@ -732,6 +732,7 @@ exports.getFarmerOrders = async (req, res) => {
     const totalRecords = countResult.total;
     const totalPages = Math.ceil(totalRecords / limit);
 
+        // Notice the backticks and ${limit} ${offset} at the end instead of ? ?
     const [orders] = await db.execute(`
       SELECT ufr.id AS request_id, ufr.orderid, ufr.farmer_id, ufr.created_at,
         fad.farmer_name, fad.mobile_number, fad.address,
@@ -739,8 +740,8 @@ exports.getFarmerOrders = async (req, res) => {
         d.District_Name, b.Block_Name, v.village_name,
         pc.id AS production_center_id, pc.name_of_production_centre, pc.complete_address,
         pc.district_id AS pc_district_id, pc.block_id AS pc_block_id, pc.department_id AS pc_department_id
-      ${baseSql} ORDER BY ufr.created_at DESC LIMIT ? OFFSET ?
-    `, [...params, limit, offset]);
+      ${baseSql} ORDER BY ufr.created_at DESC LIMIT ${limit} OFFSET ${offset}
+    `, params); // <-- Only pass params here, no limit/offset
 
     if (!orders.length) {
       return res.json({ success: true, total_records: totalRecords, total_pages: totalPages, current_page: page, data: [] });
