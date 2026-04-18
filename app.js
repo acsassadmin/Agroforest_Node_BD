@@ -9,9 +9,10 @@ const PORT = 3001;
 
 // ✅ SSL CERT PATHS (IMPORTANT: keep double backslashes OR use /)
 const sslOptions = {
-  key: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.key"),
-  cert: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.crt"),
+  key: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.key"),
+  cert: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.crt"),
 };
+
 
 // const sslOptions = {
 //   key: fs.readFileSync("C:\\Users\\DEV2\\Music\\Agroforest\\Agroforest_Node_BD\\test.acsass.com.key"),

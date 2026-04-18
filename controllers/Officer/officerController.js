@@ -162,31 +162,28 @@ exports.registerOfficer = async (req, res) => {
             created_by,
             created_at
         } = req.body;
-        console.log(officername,
-            gender,
-            mobile,
-            email,
-            department,
-            designation,
-            role,
-            district_id,
-            block_id,
-            created_by,
-            created_at);
-        
-        if (!mobile || !email) {
+
+        // Only mobile is required for duplicate check
+        if (!mobile) {
             await connection.rollback();
-            return res.status(400).json({ message: "Mobile and email are required" });
+            return res.status(400).json({ 
+                success: false,
+                message: "Mobile number is required" 
+            });
         }
 
-       const [existingUser] = await connection.query(
-    'SELECT id FROM users_customuser WHERE phone = ?',
-    [mobile]
-);
+        // Check ONLY by mobile number (not email)
+        const [existingUser] = await connection.query(
+            'SELECT id, phone, email FROM users_customuser WHERE phone = ?',
+            [mobile]
+        );
         
         if (existingUser.length > 0) {
             await connection.rollback();
-            return res.status(400).json({ message: "User already exists" });
+            return res.status(409).json({ 
+                success: false,
+                message: "Mobile number already registered. Please use a different number." 
+            });
         }
 
         let roleId = null;
@@ -223,15 +220,27 @@ exports.registerOfficer = async (req, res) => {
         ]);
 
         await connection.commit();
-        res.status(201).json({ message: "Officer registered successfully", user_id: userId });
+        res.status(201).json({ 
+            success: true,
+            message: "Officer registered successfully", 
+            user_id: userId 
+        });
 
     } catch (err) {
         await connection.rollback();
         console.error("Registration Error:", err);
+        
         if (err.code === 'ER_NO_REFERENCED_ROW_2') {
-             return res.status(400).json({ message: "Invalid Reference: Selected Department, Designation, Role, or District does not exist." });
+             return res.status(400).json({ 
+                success: false,
+                message: "Invalid Reference: Selected Department, Designation, Role, or District does not exist." 
+            });
         }
-        res.status(500).json({ error: err.message });
+        
+        res.status(500).json({ 
+            success: false,
+            error: err.message 
+        });
     } finally {
         connection.release();
     }

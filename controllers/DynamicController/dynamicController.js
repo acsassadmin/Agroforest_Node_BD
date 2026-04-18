@@ -179,4 +179,4 @@ exports.deleteDashboardScheme = async (req, res) => {
     console.error("Delete Scheme Error:", error);
     res.status(500).json({ error: "Server error" });
   }
-};
+}; 
