@@ -43,7 +43,7 @@ exports.getDashboardCarousel = async (req, res) => {
   }
 };
 
-// --- 3. Delete Dashboard Carousel ---
+// --- 3. Delete Dashboard Carousel --- 
 exports.deleteDashboardCarousel = async (req, res) => {
   try {
     const { ids } = req.body;
