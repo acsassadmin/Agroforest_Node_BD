@@ -171,7 +171,7 @@ exports.registerOfficer = async (req, res) => {
                 message: "Mobile number is required" 
             });
         }
-
+        
         // Check ONLY by mobile number (not email)
         const [existingUser] = await connection.query(
             'SELECT id, phone, email FROM users_customuser WHERE phone = ?',
