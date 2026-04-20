@@ -551,170 +551,21 @@ exports.getUsernames = async (req, res) => {
         });
     }
 };
-// exports.assignInspection = async (req, res) => {
-
-//   try {
-//     const {
-//       orderid,
-//       block_admin_id,
-//       inspection_scheduled_date,
-//       remarks
-//     } = req.body;
-
-//     console.log(orderid, block_admin_id, inspection_scheduled_date, remarks);
-
-//     // 1️⃣ Basic validation
-//     if (!orderid || !block_admin_id || !inspection_scheduled_date) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Missing required fields"
-//       });
-//     }
-
-//     // 2️⃣ Optional: Get farmer_id if exists
-//     const [orderRows] = await db.execute(
-//       `SELECT farmer_id FROM users_farmerrequest WHERE orderid = ?`,
-//       [orderid]
-//     );
-
-//     const farmer_id = orderRows.length ? orderRows[0].farmer_id : null;
-
-//     // 3️⃣ Insert into inspections table
-//     const [result] = await db.execute(
-//       `
-//       INSERT INTO inspections
-//       (order_id, farmer_id, block_admin_id, inspection_scheduled_date, remarks, completed_inspection_session)
-//       VALUES (?, ?, ?, ?, ?, 0)
-//       `,
-//       [orderid, farmer_id, block_admin_id, inspection_scheduled_date, remarks || null]
-//     );
-
-//     // 4️⃣ Return success
-//     return res.json({
-//       success: true,
-//       message: "Inspection assigned successfully",
-//       inspection_id: result.insertId
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// };
+const withBaseUrl = (path) => {
+  if (!path) return null;
+  return `${process.env.BASE_URL}${path}`;
+};
 //  Approve inspection
-exports.approveInspection = async (req, res) => {
-    try {
-        const inspectionId = req.params.id;
-
-        // 1. Find the LATEST pending upload for this inspection
-        const [uploads] = await db.query(`
-            SELECT id FROM inspection_uploads 
-            WHERE inspection_id = ? AND verification_status = 'pending'
-            ORDER BY id DESC LIMIT 1
-        `, [inspectionId]);
-
-        if (!uploads.length) {
-            return res.status(404).json({ message: "No pending upload found for this inspection to approve." });
-        }
-
-        const uploadId = uploads[0].id;
-
-        // ✅ FIX: Removed reason_for_reject = NULL
-        await db.query(`
-            UPDATE inspection_uploads 
-            SET verification_status = 'approved' 
-            WHERE id = ?
-        `, [uploadId]);
-
-        // 2. Calculate and update Next Inspection Date (+3 months)
-        const [inspections] = await db.query(`SELECT inspection_scheduled_date FROM inspections WHERE id = ?`, [inspectionId]);
-        if (inspections.length > 0) {
-            const scheduledDate = new Date(inspections[0].inspection_scheduled_date);
-            scheduledDate.setMonth(scheduledDate.getMonth() + 3); 
-            const nextDate = scheduledDate.toISOString().split('T')[0];
-
-            await db.query(`
-                UPDATE inspections 
-                SET next_inspection_date = ? 
-                WHERE id = ?
-            `, [nextDate, inspectionId]);
-        }
-
-        return res.json({ message: "Inspection approved successfully" });
-
-    } catch (error) {
-        console.error("Approve Error:", error);
-        return res.status(500).json({ message: "Server error" });
-    }
-};
-exports.rejectInspection = async (req, res) => {
-    try {
-        const inspectionId = req.params.id;
-        const { reason_for_reject } = req.body; 
-        console.log(reason_for_reject,inspectionId);
-        
-        // 1. Find the LATEST pending upload for this inspection
-        const [uploads] = await db.query(`
-            SELECT id FROM inspection_uploads 
-            WHERE inspection_id = ? AND verification_status = 'pending'
-            ORDER BY id DESC LIMIT 1
-        `, [inspectionId]);
-
-        if (!uploads.length) {
-            return res.status(404).json({ message: "No pending upload found for this inspection to reject." });
-        }
-
-        const uploadId = uploads[0].id;
-
-        // ✅ FIX: Removed reason_for_reject = ? from the query
-        await db.query(`
-            UPDATE inspection_uploads
-            SET verification_status = 'rejected'
-            WHERE id = ?
-        `, [uploadId]);
-
-        // 2. Clear the next_inspection_date since it was rejected
-        await db.query(`
-            UPDATE inspections 
-            SET next_inspection_date = NULL 
-            WHERE id = ?
-        `, [inspectionId]);
-
-        // 3. Add rejection remark to the main inspection table (This is where the reason is safely saved!)
-        const [inspRows] = await db.query(`SELECT remarks FROM inspections WHERE id = ?`, [inspectionId]);
-        if (inspRows.length > 0) {
-            const oldRemarks = inspRows[0].remarks || "";
-            const rejectRemark = `Rejected on ${new Date().toISOString().split('T')[0]}. Reason: ${reason_for_reject || 'No reason provided'}.`;
-            
-            await db.query(`
-                UPDATE inspections 
-                SET remarks = ?
-                WHERE id = ?
-            `, [oldRemarks ? `${oldRemarks} | ${rejectRemark}` : rejectRemark, inspectionId]);
-        }
-
-        return res.json({ 
-            message: "Inspection rejected successfully",
-            reason_for_reject: reason_for_reject || null // Still sending it back to frontend so it can show the alert
-        });
-
-    } catch (error) {
-        console.error("Reject Error:", error);
-        return res.status(500).json({ message: "Server error" });
-    }
-};
-// get farmers orders
 exports.getFarmerOrders = async (req, res) => {
   try {
     const user_id = req.params.userid;
     const role = req.params.role;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const offset = Number((page - 1) * limit) || 0; 
-    console.log(user_id,role);
-    
+    const offset = (page - 1) * limit;
+
     const [userRows] = await db.execute(
-      `SELECT district_id, block_id, department_id FROM users_customuser WHERE id = ?`,
+      `SELECT district_id, block_id, department_id, village_id FROM users_customuser WHERE id = ?`,
       [user_id]
     );
 
@@ -729,70 +580,60 @@ exports.getFarmerOrders = async (req, res) => {
       LEFT JOIN master_block b ON b.id = fad.block_id
       LEFT JOIN master_village v ON v.id = fad.village_id
       LEFT JOIN productioncenter_productioncenter pc ON pc.id = ufr.production_center_id
-      WHERE ufr.status = 'billed' AND ufr.type = 'scheme' AND ufr.payment_type = 'Free of Cost'
+      WHERE ufr.status = 'billed' AND ufr.type = 'scheme'
     `;
     let params = [];
 
     if (role === "district_admin") { baseSql += ` AND pc.district_id = ?`; params.push(user.district_id); }
     else if (role === "block_admin") { baseSql += ` AND pc.block_id = ?`; params.push(user.block_id); }
     else if (role === "department_admin") { baseSql += ` AND pc.department_id = ?`; params.push(user.department_id); }
+    else if (role === "field_inspector") { baseSql += ` AND pc.village_id = ?`; params.push(user.village_id); }
 
     const [[countResult]] = await db.execute(`SELECT COUNT(DISTINCT ufr.id) as total ${baseSql}`, params);
     const totalRecords = countResult.total;
-    const totalPages = Math.ceil(totalRecords / limit);
 
-        // Notice the backticks and ${limit} ${offset} at the end instead of ? ?
     const [orders] = await db.execute(`
       SELECT ufr.id AS request_id, ufr.orderid, ufr.farmer_id, ufr.created_at,
         fad.farmer_name, fad.mobile_number, fad.address,
-        fad.latitude AS farmer_latitude, fad.longitude AS farmer_longitude, 
+        fad.latitude AS farmer_latitude, fad.longitude AS farmer_longitude,
         d.District_Name, b.Block_Name, v.village_name,
         pc.id AS production_center_id, pc.name_of_production_centre, pc.complete_address,
-        pc.district_id AS pc_district_id, pc.block_id AS pc_block_id, pc.department_id AS pc_department_id
-      ${baseSql} ORDER BY ufr.created_at DESC LIMIT ${limit} OFFSET ${offset}
-    `, params); // <-- Only pass params here, no limit/offset
+        pc.district_id AS pc_district_id, pc.block_id AS pc_block_id, 
+        pc.department_id AS pc_department_id, pc.village_id AS pc_village_id
+      ${baseSql} 
+      ORDER BY ufr.created_at DESC 
+      LIMIT ${limit} OFFSET ${offset}
+    `, params);
 
     if (!orders.length) {
-      return res.json({ success: true, total_records: totalRecords, total_pages: totalPages, current_page: page, data: [] });
+      return res.json({ success: true, total_records: totalRecords, current_page: page, data: [] });
     }
 
-    // 1️⃣ Get Items
+    // 1. Get Items
     const requestIds = orders.map(o => o.request_id);
     const [items] = await db.execute(`
-      SELECT ufi.request_id, ufi.stock_id, ufi.final_quantity, ufi.scheme_id, ts.name AS scheme_name, t.name AS species_name, t.name_tamil AS species_name_tamil
+      SELECT ufi.request_id, ufi.stock_id, ufi.final_quantity, ufi.scheme_id,
+             ts.name AS scheme_name, t.name AS species_name, t.name_tamil AS species_name_tamil
       FROM users_farmerrequestitem ufi
       LEFT JOIN tn_schema ts ON ts.id = ufi.scheme_id
       LEFT JOIN tbl_agroforest_trees t ON t.id = ufi.species_id
       WHERE ufi.request_id IN (${requestIds.map(() => '?').join(',')})
     `, requestIds);
 
-    const itemsMap = {}; 
+    const itemsMap = {};
     const schemeMap = {};
     items.forEach(i => {
       if (!itemsMap[i.request_id]) itemsMap[i.request_id] = [];
-      itemsMap[i.request_id].push({ 
-        request_id: i.request_id, stock_id: i.stock_id, final_quantity: i.final_quantity, 
-        species_name: i.species_name, species_name_tamil: i.species_name_tamil 
+      itemsMap[i.request_id].push({
+        request_id: i.request_id, stock_id: i.stock_id, final_quantity: i.final_quantity,
+        species_name: i.species_name, species_name_tamil: i.species_name_tamil
       });
       if (!schemeMap[i.request_id] && i.scheme_id) schemeMap[i.request_id] = { id: i.scheme_id, name: i.scheme_name };
     });
 
-    // 2️⃣ Get Block Admins
-    const blockIds = [...new Set(orders.map(o => o.pc_block_id).filter(Boolean))];
-    let blockAdminMap = {};
-    if (blockIds.length) {
-      const [admins] = await db.execute(`SELECT id, block_id, first_name, last_name FROM users_customuser WHERE role_id = 6 AND block_id IN (${blockIds.map(() => '?').join(',')})`, blockIds);
-      admins.forEach(a => {
-        if (!blockAdminMap[a.block_id]) blockAdminMap[a.block_id] = [];
-        blockAdminMap[a.block_id].push({ id: a.id, name: `${a.first_name} ${a.last_name || ''}`.trim() });
-      });
-    }
-
-    // 3️⃣ Inspections + Uploads (FULLY FIXED)
+    // 2. Get Inspections + Uploads
     let inspectionMap = {};
-
     if (requestIds.length) {
-      // Uses request_id (Requires the ALTER TABLE command to be run!)
       const [inspections] = await db.execute(`
         SELECT * FROM inspections WHERE request_id IN (${requestIds.map(() => '?').join(',')})
       `, requestIds);
@@ -801,190 +642,293 @@ exports.getFarmerOrders = async (req, res) => {
       let uploadMap = {};
 
       if (inspectionIds.length) {
-        // ✅ FIX 1: Removed 'iu.reason_for_reject' from this SELECT statement
+        // ✅ FIX: Added cu.name to handle both 'name' and 'first_name/last_name' columns
         const [uploads] = await db.execute(`
-          SELECT iu.id, iu.inspection_id, iu.image, iu.inspection_address, iu.latitude, iu.longitude, iu.survey_count, iu.inspected_by, iu.verification_status,
-                 cu.first_name, cu.last_name
+          SELECT iu.id, iu.inspection_id, iu.image, iu.inspection_address,
+                 iu.latitude, iu.longitude, iu.survey_count, iu.inspected_by,
+                 iu.verification_status, iu.created_at,
+                 cu.first_name, cu.last_name AS user_full_name
           FROM inspection_uploads iu
           LEFT JOIN users_customuser cu ON cu.id = iu.inspected_by
           WHERE iu.inspection_id IN (${inspectionIds.map(() => '?').join(',')})
+          ORDER BY iu.created_at DESC
         `, inspectionIds);
 
         uploads.forEach(u => {
           if (!uploadMap[u.inspection_id]) uploadMap[u.inspection_id] = [];
           
-          const imagePath = `https://192.168.1.37:3001/uploads/${u.image}`; 
+          const imagePath = process.env.BASE_URL 
+            ? `${process.env.BASE_URL}/uploads/${u.image}` 
+            : `/uploads/${u.image}`;
+
+          // ✅ FIX: Safely get name (checks 'user_full_name' first, then falls back to first + last)
+          const inspectorName = u.user_full_name || `${u.first_name || ''} ${u.last_name || ''}`.trim() || "Unknown";
+
           uploadMap[u.inspection_id].push({
             id: u.id, image: imagePath, inspection_address: u.inspection_address,
             latitude: u.latitude, longitude: u.longitude, survey_count: u.survey_count,
             inspected_by: u.inspected_by,
-            inspected_by_name: `${u.first_name || ''} ${u.last_name || ''}`.trim(),
+            inspected_by_name: inspectorName,
             verification_status: u.verification_status || 'pending',
-            // ✅ FIX 2: Hardcoded empty string since the column doesn't exist in your DB
-            reason_for_reject: "" 
+            uploaded_at: u.created_at
           });
         });
       }
 
-      // ✅ FIX 3: Maps using ins.request_id
       inspections.forEach(ins => {
         if (!inspectionMap[ins.request_id]) inspectionMap[ins.request_id] = [];
         inspectionMap[ins.request_id].push({
-          id: ins.id, 
-          farmer_id: ins.farmer_id, 
-          block_admin_id: ins.block_admin_id,
-          inspection_scheduled_date: ins.inspection_scheduled_date, 
-          remarks: ins.remarks,
-          completed_inspection_session: ins.completed_inspection_session,
-          next_inspection_date: ins.next_inspection_date, 
-          created_at: ins.created_at,
-          uploads: uploadMap[ins.id] || []
+          id: ins.id, farmer_id: ins.farmer_id, field_inspector_id: ins.field_inspector_id,
+          inspection_date: ins.inspection_date, remarks: ins.remarks,
+          created_at: ins.created_at, uploads: uploadMap[ins.id] || []
         });
       });
     }
 
-    // 4️⃣ Final Data Mapping
+    // 3. Final Data Mapping
     const result = orders.map(order => ({
-      order_id: order.orderid, 
-      order_date: order.created_at, 
+      order_id: order.orderid, order_date: order.created_at,
       scheme: schemeMap[order.request_id] || null,
       farmer: order.farmer_id ? { 
-      id: order.farmer_id, name: order.farmer_name, mobile: order.mobile_number, address: order.address, 
-      location: { district: order.District_Name, block: order.Block_Name, village: order.village_name,latitude: order.farmer_latitude,
-      longitude: order.farmer_longitude } 
+        id: order.farmer_id, name: order.farmer_name, mobile: order.mobile_number, address: order.address, 
+        location: { district: order.District_Name, block: order.Block_Name, village: order.village_name, latitude: order.farmer_latitude, longitude: order.farmer_longitude } 
       } : null,
       production_center: order.production_center_id ? { 
         id: order.production_center_id, name: order.name_of_production_centre, address: order.complete_address, 
-        district_id: order.pc_district_id, block_id: order.pc_block_id, department_id: order.pc_department_id 
+        district_id: order.pc_district_id, block_id: order.pc_block_id, department_id: order.pc_department_id, village_id: order.pc_village_id 
       } : null,
-      block_admins: blockAdminMap[order.pc_block_id] || [],
-      
-      // ✅ FIX 4: Maps using order.request_id
       inspections: inspectionMap[order.request_id] || [],
-      
       items: itemsMap[order.request_id] || []
     }));
-    
-    return res.json({ 
-      success: true, 
-      total_records: totalRecords, 
-      total_pages: totalPages, 
-      current_page: page, 
-      data: result 
-    });
 
+    return res.json({ success: true, total_records: totalRecords, current_page: page, data: result });
   } catch (err) {
     console.error("ERROR:", err);
-    res.status(500).json({ message: "Server Error", err });
+    res.status(500).json({ message: "Server Error", err: err.message });
   }
 };
-// upload inspection
+// 
 exports.uploadInspectionDetails = async (req, res) => {
   try {
-    // Variable is named inspection_id here
     const { inspection_id, inspection_address, latitude, longitude, survey_count, inspected_by, sapplings } = req.body;
 
     if (!inspection_id) return res.status(400).json({ message: "Inspection ID is required" });
-    
-    // ⚠️ ENSURE YOU HAVE multer middleware on your route, otherwise req.file is undefined!
     if (!req.file || !req.file.filename) return res.status(400).json({ message: "No file uploaded" });
 
     const image = req.file.filename;
 
-    // 1. Insert into inspection_uploads
-     const sql = `INSERT INTO inspection_uploads 
+    const sql = `
+      INSERT INTO inspection_uploads 
       (inspection_id, image, reason_for_reject, inspection_address, latitude, longitude, survey_count, inspected_by) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+      VALUES (?, ?, '', ?, ?, ?, ?, ?)
+    `;
 
-    // ✅ FIXED: 3rd value is now '' instead of nothing
     const result = await db.query(sql, [
-      inspection_id, 
-      image, 
-      '',  // <-- empty string for reason_for_reject
-      inspection_address, 
-      latitude, 
-      longitude, 
-      survey_count, 
+      inspection_id,
+      image,
+      inspection_address,
+      latitude,
+      longitude,
+      survey_count,
       inspected_by
     ]);
     
     const uploadId = result[0].insertId;
 
-    // 2. Parse sapplings JSON string from frontend
+    // Parse sapplings
     let parsedSapplings = sapplings;
     if (typeof sapplings === 'string') {
       try { parsedSapplings = JSON.parse(sapplings); } catch (e) { parsedSapplings = null; }
     }
 
-    // 3. Insert into inspection_sapplings
     if (parsedSapplings && Array.isArray(parsedSapplings)) {
       const sapplingValues = parsedSapplings.map(item => [uploadId, item.sapplingname, item.survey_count]);
       const sapplingSql = `INSERT INTO inspection_sapplings (upload_id, sappling_name, survey_count) VALUES ?`;
       await db.query(sapplingSql, [sapplingValues]);
     }
 
-    // ✅ FIX: Changed inspectionId back to inspection_id
-    const [inspRows] = await db.query(`SELECT inspection_scheduled_date, remarks FROM inspections WHERE id = ?`, [inspection_id]);
+    // ✅ FIXED: Changed inspectionId to inspection_id here
+    const today = new Date().toISOString().split('T')[0];
+    const [inspRows] = await db.query(`SELECT remarks FROM inspections WHERE id = ?`, [inspection_id]);
 
     if (inspRows.length > 0) {
-      const originalDate = new Date(inspRows[0].inspection_scheduled_date);
-      originalDate.setMonth(originalDate.getMonth() + 3); // +3 months
-      const nextDate = originalDate.toISOString().split('T')[0]; 
-
       const oldRemarks = inspRows[0].remarks || "";
-      const uploadRemark = `Inspection uploaded on ${new Date().toISOString().split('T')[0]} (${survey_count} saplings found).`;
-
-      // ✅ FIX: Changed inspectionId back to inspection_id
+      const uploadRemark = `Inspection uploaded on ${today} (${survey_count} saplings found).`;
+      
+      // ✅ FIXED: Changed inspectionId to inspection_id here
       await db.query(
-        `UPDATE inspections SET next_inspection_date = ?, remarks = ? WHERE id = ?`,
-        [nextDate, oldRemarks ? `${oldRemarks} | ${uploadRemark}` : uploadRemark, inspection_id]
+        `UPDATE inspections SET inspection_date = ?, remarks = ? WHERE id = ?`,
+        [today, oldRemarks ? `${oldRemarks} | ${uploadRemark}` : uploadRemark, inspection_id]
       );
     }
 
-    return res.json({ message: "Upload successful", uploadId: uploadId });
+    return res.json({ 
+      message: "Upload successful", 
+      uploadId: uploadId
+    });
+
   } catch (error) {
     console.error("Upload Error:", error);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error", err: error.message });
   }
 };
-// assign inspection
-exports.assignInspection = async (req, res) => {
+// 
+exports.createInspection = async (req, res) => {
   try {
-    const { orderid, block_admin_id, inspection_scheduled_date, remarks } = req.body;
-    console.log(orderid, block_admin_id, inspection_scheduled_date, remarks);
-    
-    if (!orderid || !block_admin_id || !inspection_scheduled_date) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
+    const { request_id, farmer_id, field_inspector_id } = req.body;
+   console.log(request_id, farmer_id, field_inspector_id );
+   
+    if (!request_id || !farmer_id || !field_inspector_id) {
+      return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // Get the actual request_id (ufr.id) using the orderid string
-    const [orderRows] = await db.execute(
-      `SELECT id, farmer_id FROM users_farmerrequest WHERE orderid = ?`,
-      [orderid]
-    );
+    // Check if there's already a pending inspection
+    const [existingInspections] = await db.execute(`
+      SELECT i.id, iu.verification_status 
+      FROM inspections i
+      LEFT JOIN inspection_uploads iu ON iu.inspection_id = i.id AND iu.verification_status = 'pending'
+      WHERE i.request_id = ?
+      ORDER BY i.id DESC
+      LIMIT 1
+    `, [request_id]);
 
-    if (!orderRows.length) return res.status(404).json({ message: "Order not found" });
-    
-    const request_id = orderRows[0].id; // This is the crucial link!
-    const farmer_id = orderRows[0].farmer_id;
+    if (existingInspections.length > 0) {
+      const lastInspection = existingInspections[0];
+      if (lastInspection.verification_status === 'pending') {
+        return res.status(400).json({
+          message: "Cannot create new inspection. Previous inspection is still pending review."
+        });
+      }
+    }
 
-    // Insert using the NEW columns you added
+    // Create new inspection
     const [result] = await db.execute(
-      `INSERT INTO inspections 
-      (request_id, farmer_id, block_admin_id, inspection_scheduled_date, remarks, completed_inspection_session)
-      VALUES (?, ?, ?, ?, ?, 0)`,
-      [request_id, farmer_id, block_admin_id, inspection_scheduled_date, remarks || null]
+      `INSERT INTO inspections (request_id, farmer_id, field_inspector_id, inspection_date)
+       VALUES (?, ?, ?, NULL)`,
+      [request_id, farmer_id, field_inspector_id]
     );
-      
+
     return res.json({
-      success: true,                       
-      message: "Inspection assigned successfully",
+      success: true,
+      message: "Inspection created successfully",
       inspection_id: result.insertId
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    console.error("Create Inspection Error:", err);
+    res.status(500).json({ message: "Server error", err: err.message });
+  }
+};
+// 
+exports.approveInspection = async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+
+    // Find the LATEST pending upload for this inspection
+    const [uploads] = await db.query(`
+      SELECT id FROM inspection_uploads 
+      WHERE inspection_id = ? AND verification_status = 'pending'
+      ORDER BY id DESC LIMIT 1
+    `, [inspectionId]);
+
+    if (!uploads.length) {
+      return res.status(404).json({
+        message: "No pending upload found for this inspection to approve."
+      });
+    }
+
+    const uploadId = uploads[0].id;
+
+    // Update verification status
+    await db.query(`
+      UPDATE inspection_uploads 
+      SET verification_status = 'approved' 
+      WHERE id = ?
+    `, [uploadId]);
+
+    // Add approval remark
+    const [inspRows] = await db.query(
+      `SELECT remarks FROM inspections WHERE id = ?`,
+      [inspectionId]
+    );
+
+    if (inspRows.length > 0) {
+      const oldRemarks = inspRows[0].remarks || "";
+      const approveRemark = `Approved on ${new Date().toISOString().split('T')[0]}.`;
+
+      await db.query(
+        `UPDATE inspections SET remarks = ? WHERE id = ?`,
+        [
+          oldRemarks ? `${oldRemarks} | ${approveRemark}` : approveRemark,
+          inspectionId
+        ]
+      );
+    }
+
+    return res.json({ message: "Inspection approved successfully" });
+
+  } catch (error) {
+    console.error("Approve Error:", error);
+    return res.status(500).json({ message: "Server error", err: error.message });
+  }
+};
+// 
+exports.rejectInspection = async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+    const { reason_for_reject } = req.body;
+
+    console.log('Reject inspection:', { inspectionId, reason_for_reject });
+
+    // Find the LATEST pending upload
+    const [uploads] = await db.query(`
+      SELECT id FROM inspection_uploads 
+      WHERE inspection_id = ? AND verification_status = 'pending'
+      ORDER BY id DESC LIMIT 1
+    `, [inspectionId]);
+
+    if (!uploads.length) {
+      return res.status(404).json({
+        message: "No pending upload found for this inspection to reject."
+      });
+    }
+
+    const uploadId = uploads[0].id;
+
+    // Update verification status
+    await db.query(`
+      UPDATE inspection_uploads
+      SET verification_status = 'rejected'
+      WHERE id = ?
+    `, [uploadId]);
+
+    // Add rejection remark
+    const [inspRows] = await db.query(
+      `SELECT remarks FROM inspections WHERE id = ?`,
+      [inspectionId]
+    );
+
+    if (inspRows.length > 0) {
+      const oldRemarks = inspRows[0].remarks || "";
+      const rejectRemark = `Rejected on ${new Date().toISOString().split('T')[0]}. Reason: ${reason_for_reject || 'No reason provided'}.`;
+
+      await db.query(
+        `UPDATE inspections SET remarks = ? WHERE id = ?`,
+        [
+          oldRemarks ? `${oldRemarks} | ${rejectRemark}` : rejectRemark,
+          inspectionId
+        ]
+      );
+    }
+
+    return res.json({
+      message: "Inspection rejected successfully",
+      reason_for_reject: reason_for_reject || null
+    });
+
+  } catch (error) {
+    console.error("Reject Error:", error);
+    return res.status(500).json({ message: "Server error", err: error.message });
   }
 };
 // get all schems
