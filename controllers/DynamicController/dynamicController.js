@@ -76,7 +76,6 @@ exports.deleteDashboardCarousel = async (req, res) => {
   }
 };
 
-// --- 4. Upload Dashboard Scheme ---
 exports.uploadDashboardScheme = async (req, res) => {
   try {
     if (!req.file) {
@@ -87,23 +86,31 @@ exports.uploadDashboardScheme = async (req, res) => {
       return res.status(400).json({ error: "Scheme details are required (EN & TA)" });
     }
 
-    // ✅ store only relative path
     const imageUrl = `/uploads/${req.file.filename}`;
 
-    let preferredSpeciesEn = [];
-    let preferredSpeciesTa = [];
+    // Parse all arrays safely
+    let preferredSpeciesEn = [], preferredSpeciesTa = [];
+    let schemeEligibilityEn = [], schemeEligibilityTa = [];
+    let schemeDocumentsEn = [], schemeDocumentsTa = [];
 
     try {
       preferredSpeciesEn = JSON.parse(req.body.preferred_species_en || "[]");
       preferredSpeciesTa = JSON.parse(req.body.preferred_species_ta || "[]");
+      schemeEligibilityEn = JSON.parse(req.body.scheme_eligibility_en || "[]");
+      schemeEligibilityTa = JSON.parse(req.body.scheme_eligibility_ta || "[]");
+      schemeDocumentsEn = JSON.parse(req.body.scheme_documents_en || "[]");
+      schemeDocumentsTa = JSON.parse(req.body.scheme_documents_ta || "[]");
     } catch (e) {
-      return res.status(400).json({ error: "Invalid preferred species format" });
+      return res.status(400).json({ error: "Invalid JSON format in one of the fields" });
     }
 
     const sql = `
       INSERT INTO dashboard_schemes 
-      (image_url, about_scheme_en, about_scheme_ta, preferred_species_en, preferred_species_ta) 
-      VALUES (?, ?, ?, ?, ?)
+      (image_url, about_scheme_en, about_scheme_ta, 
+       preferred_species_en, preferred_species_ta, 
+       scheme_eligibility_en, scheme_eligibility_ta, 
+       scheme_documents_en, scheme_documents_ta) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await db.query(sql, [
@@ -111,23 +118,101 @@ exports.uploadDashboardScheme = async (req, res) => {
       req.body.about_scheme_en,
       req.body.about_scheme_ta,
       JSON.stringify(preferredSpeciesEn),
-      JSON.stringify(preferredSpeciesTa)
+      JSON.stringify(preferredSpeciesTa),
+      JSON.stringify(schemeEligibilityEn),
+      JSON.stringify(schemeEligibilityTa),
+      JSON.stringify(schemeDocumentsEn),
+      JSON.stringify(schemeDocumentsTa)
     ]);
 
     res.status(201).json({ message: "Scheme uploaded successfully" });
 
   } catch (error) {
-    console.error("Upload Scheme Error:", error);
-    res.status(500).json({ error: "Server error" });
+    console.error("Upload Scheme Error:", error); // ✅ Check your terminal for this error!
+    res.status(500).json({ error: "Server error", details: error.message }); // ✅ Sends exact error to Postman/Frontend
   }
 };
+// 
+exports.updateDashboardScheme = async (req, res) => {
+  try {
+    const { id, existing_image, about_scheme_en, about_scheme_ta } = req.body;
 
+    if (!id) {
+      return res.status(400).json({ error: "Scheme ID is required" });
+    }
+
+    // Use existing image if new one isn't uploaded
+    const imageUrl = req.file ? `/uploads/${req.file.filename}` : existing_image;
+
+    // Parse all arrays safely
+    let preferredSpeciesEn = [], preferredSpeciesTa = [];
+    let schemeEligibilityEn = [], schemeEligibilityTa = [];
+    let schemeDocumentsEn = [], schemeDocumentsTa = [];
+
+    try {
+      preferredSpeciesEn = JSON.parse(req.body.preferred_species_en || "[]");
+      preferredSpeciesTa = JSON.parse(req.body.preferred_species_ta || "[]");
+      schemeEligibilityEn = JSON.parse(req.body.scheme_eligibility_en || "[]");
+      schemeEligibilityTa = JSON.parse(req.body.scheme_eligibility_ta || "[]");
+      schemeDocumentsEn = JSON.parse(req.body.scheme_documents_en || "[]");
+      schemeDocumentsTa = JSON.parse(req.body.scheme_documents_ta || "[]");
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON format in one of the fields" });
+    }
+
+    const sql = `
+      UPDATE dashboard_schemes 
+      SET 
+        image_url = ?, 
+        about_scheme_en = ?, 
+        about_scheme_ta = ?, 
+        preferred_species_en = ?, 
+        preferred_species_ta = ?,
+        scheme_eligibility_en = ?,
+        scheme_eligibility_ta = ?,
+        scheme_documents_en = ?,
+        scheme_documents_ta = ?
+      WHERE id = ?
+    `;
+
+    await db.query(sql, [
+      imageUrl,
+      about_scheme_en,
+      about_scheme_ta,
+      JSON.stringify(preferredSpeciesEn),
+      JSON.stringify(preferredSpeciesTa),
+      JSON.stringify(schemeEligibilityEn),
+      JSON.stringify(schemeEligibilityTa),
+      JSON.stringify(schemeDocumentsEn),
+      JSON.stringify(schemeDocumentsTa),
+      id
+    ]);
+
+    res.status(200).json({ message: "Scheme updated successfully" });
+
+  } catch (error) {
+    console.error("Update Scheme Error:", error); // ✅ Check your terminal for this error!
+    res.status(500).json({ error: "Server error", details: error.message });
+  }
+};
 // --- 5. Get Dashboard Schemes ---
+// ✅ Helper function to safely handle JSON (fixes the parse error)
+const parseSafe = (val) => {
+  if (!val) return [];
+  // If mysql2 already parsed the JSON column, return it directly
+  if (typeof val === 'object') return val; 
+  // If it's a string, parse it
+  try { return JSON.parse(val); } 
+  catch (e) { return []; }
+};
+
 exports.getDashboardSchemes = async (req, res) => {
   try {
     const sql = `
       SELECT id, image_url, about_scheme_en, about_scheme_ta, 
-             preferred_species_en, preferred_species_ta 
+             preferred_species_en, preferred_species_ta,
+             scheme_eligibility_en, scheme_eligibility_ta,
+             scheme_documents_en, scheme_documents_ta
       FROM dashboard_schemes 
       ORDER BY id DESC
     `;
@@ -136,9 +221,15 @@ exports.getDashboardSchemes = async (req, res) => {
 
     const parsedResults = results.map(row => ({
       ...row,
-      image_url: withBaseUrl(row.image_url), // ✅ attach here
-      preferred_species_en: JSON.parse(row.preferred_species_en || "[]"),
-      preferred_species_ta: JSON.parse(row.preferred_species_ta || "[]")
+      image_url: withBaseUrl(row.image_url),
+      
+      // ✅ Use parseSafe instead of JSON.parse
+      preferred_species_en: parseSafe(row.preferred_species_en),
+      preferred_species_ta: parseSafe(row.preferred_species_ta),
+      scheme_eligibility_en: parseSafe(row.scheme_eligibility_en),
+      scheme_eligibility_ta: parseSafe(row.scheme_eligibility_ta),
+      scheme_documents_en: parseSafe(row.scheme_documents_en),
+      scheme_documents_ta: parseSafe(row.scheme_documents_ta)
     }));
 
     res.json(parsedResults);
@@ -148,57 +239,6 @@ exports.getDashboardSchemes = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
-
-// --- 6. Update Dashboard Scheme ---
-exports.updateDashboardScheme = async (req, res) => {
-  try {
-    const {
-      id,
-      about_scheme_en,
-      about_scheme_ta,
-      preferred_species_en,
-      preferred_species_ta,
-      existing_image
-    } = req.body;
-
-    if (!id) {
-      return res.status(400).json({ error: "Scheme ID is required" });
-    }
-
-    let imageUrl = existing_image;
-
-    // ✅ if new file, store only relative path
-    if (req.file) {
-      imageUrl = `/uploads/${req.file.filename}`;
-    }
-
-    const sql = `
-      UPDATE dashboard_schemes 
-      SET image_url = ?, 
-          about_scheme_en = ?, 
-          about_scheme_ta = ?, 
-          preferred_species_en = ?, 
-          preferred_species_ta = ? 
-      WHERE id = ?
-    `;
-
-    await db.query(sql, [
-      imageUrl,
-      about_scheme_en,
-      about_scheme_ta,
-      preferred_species_en,
-      preferred_species_ta,
-      id
-    ]);
-
-    res.json({ message: "Scheme updated successfully" });
-
-  } catch (error) {
-    console.error("Update Error:", error);
-    res.status(500).json({ error: "Server error" });
-  }
-};
-
 // --- 7. Delete Dashboard Scheme ---
 exports.deleteDashboardScheme = async (req, res) => {
   try {

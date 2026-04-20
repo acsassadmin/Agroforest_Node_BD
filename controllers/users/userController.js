@@ -305,7 +305,7 @@ exports.sendLoginOtp = async (req, res) => {
         return res.status(403).json({ message: 'Access Denied: This portal is strictly for Production Centers.' });
       }
     } else if (expected_role_group === 'officer') {
-      const allowedOfficerRoles = ['superadmin', 'district_admin', 'department_admin', 'block_admin'];
+      const allowedOfficerRoles = ['superadmin', 'district_admin', 'department_admin', 'block_admin','field_inspector'];
       if (!allowedOfficerRoles.includes(user.role_name)) {
         return res.status(403).json({ message: 'Access Denied: This portal is strictly for Officers.' });
       }
@@ -1620,7 +1620,8 @@ exports.approveItem = async (req, res) => {
              type = ?,
              scheme_id = ?,
              schemed_rate = ?,
-             total_amount = ?
+             total_amount = ?,
+             final_quantity = ?
          WHERE id = ?`,
         [
           approved_quantity,
@@ -1628,6 +1629,7 @@ exports.approveItem = async (req, res) => {
           type === 'scheme' ? scheme_id : null,
           schemed_rate || 0,
           schemed_rate || 0, // ✅ treated as total amount
+          approved_quantity, // ✅ Set final_quantity equal to approved_quantity
           id
         ]
       );
@@ -1665,7 +1667,7 @@ exports.approveItem = async (req, res) => {
 
       await connection.query(
         `UPDATE users_farmerrequestitem 
-         SET status = 'rejected', approved_quantity = 0 
+         SET status = 'rejected', approved_quantity = 0, final_quantity = 0
          WHERE id = ?`,
         [id]
       );
