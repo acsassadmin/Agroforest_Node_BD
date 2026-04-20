@@ -176,21 +176,18 @@ exports.getProductionCenters = async (req, res) => {
     if (role === 'department_admin') {
       if (!user_department_id)
         return res.status(400).json({ success: false, error: "Department ID required" });
-
       scopeFilter = 'department';
       scopeId = user_department_id;
 
     } else if (role === 'district_admin') {
       if (!user_district_id)
         return res.status(400).json({ success: false, error: "District ID required" });
-
       scopeFilter = 'district';
       scopeId = user_district_id;
 
     } else if (role === 'block_admin') {
       if (!user_block_id)
         return res.status(400).json({ success: false, error: "Block ID required" });
-
       scopeFilter = 'block';
       scopeId = user_block_id;
     }
@@ -323,6 +320,8 @@ exports.getProductionCenters = async (req, res) => {
     // ============================
     // DATA QUERY
     // ============================
+    // ✅ FIX: Directly inject limit/offset into the SQL string.
+    // This avoids the mysql2 prepared statement bug with LIMIT ? OFFSET ?
     const dataQuery = `
       SELECT 
         pc.*,
@@ -334,16 +333,16 @@ exports.getProductionCenters = async (req, res) => {
       ${joins}
       WHERE ${whereString}
       ORDER BY pc.id DESC
-      LIMIT ? OFFSET ?
+      LIMIT ${limit} OFFSET ${offset}
     `;
 
-    const [centers] = await db.execute(dataQuery, [...params, limit, offset]);
+    // ✅ FIX: Only pass the `params` array now. Do NOT spread limit/offset here.
+    const [centers] = await db.execute(dataQuery, params);
 
     // ============================
-    // CERTIFICATES (FIXED HERE)
+    // CERTIFICATES
     // ============================
     let certs = [];
-
     const centerIds = centers.map(c => c.id);
 
     if (centerIds.length > 0) {
