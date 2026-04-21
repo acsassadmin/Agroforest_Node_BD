@@ -133,7 +133,6 @@ const formatCenterData = (centers, certificates) => {
 };
 
 // --- PRODUCTION CENTER LOGIC ---
-
 exports.getProductionCenters = async (req, res) => {
   try {
     const user = req.user || {};
@@ -142,22 +141,45 @@ exports.getProductionCenters = async (req, res) => {
     const id = query.id;
     const search = query.search;
 
-    const page = Math.max(parseInt(query.page) || 1, 1);
-    const limit = Math.max(parseInt(query.limit) || 10, 1);
+    // ============================
+    // SAFE PAGINATION (STRICT)
+    // ============================
+    let page = Number(query.page);
+    let limit = Number(query.limit);
+
+    if (!Number.isInteger(page) || page < 1) page = 1;
+    if (!Number.isInteger(limit) || limit < 1) limit = 10;
+
     const offset = (page - 1) * limit;
 
-    const production_type = query.production_type;
-    const status = query.status;
+    // HARD clamp (extra safety)
+    limit = Math.min(limit, 100);
 
+    // ============================
+    // HELPERS
+    // ============================
     const parseArrayParam = (param) => {
       if (!param) return [];
-      if (Array.isArray(param)) return param.map(Number).filter(n => !isNaN(n));
+
+      if (Array.isArray(param)) {
+        return param.map(Number).filter(Number.isInteger);
+      }
+
       return param
         .toString()
         .split(',')
-        .map(id => parseInt(id.trim()))
-        .filter(id => !isNaN(id));
+        .map(v => Number(v.trim()))
+        .filter(Number.isInteger);
     };
+
+    const cleanParams = (arr) =>
+      arr.filter(v => v !== undefined && v !== null);
+
+    // ============================
+    // FILTER INPUTS
+    // ============================
+    const production_type = query.production_type;
+    const status = query.status;
 
     const district_ids = parseArrayParam(query.district_ids);
     const block_ids = parseArrayParam(query.block_ids);
@@ -166,33 +188,30 @@ exports.getProductionCenters = async (req, res) => {
     // ROLE & SCOPE
     // ============================
     const role = query.role || user.role;
-    const user_department_id = query.department_id || user.department_id;
-    const user_district_id = query.district_id || user.district_id;
-    const user_block_id = query.block_id || user.block_id;
 
     let scopeFilter = null;
     let scopeId = null;
 
     if (role === 'department_admin') {
-      if (!user_department_id)
+      if (!user.department_id)
         return res.status(400).json({ success: false, error: "Department ID required" });
 
       scopeFilter = 'department';
-      scopeId = user_department_id;
+      scopeId = Number(user.department_id);
 
     } else if (role === 'district_admin') {
-      if (!user_district_id)
+      if (!user.district_id)
         return res.status(400).json({ success: false, error: "District ID required" });
 
       scopeFilter = 'district';
-      scopeId = user_district_id;
+      scopeId = Number(user.district_id);
 
     } else if (role === 'block_admin') {
-      if (!user_block_id)
+      if (!user.block_id)
         return res.status(400).json({ success: false, error: "Block ID required" });
 
       scopeFilter = 'block';
-      scopeId = user_block_id;
+      scopeId = Number(user.block_id);
     }
 
     // ============================
@@ -209,7 +228,7 @@ exports.getProductionCenters = async (req, res) => {
     // SINGLE ITEM
     // ============================
     if (id) {
-      let singleQuery = `
+      let sql = `
         SELECT 
           pc.*,
           dpt.name as department_name,
@@ -221,25 +240,25 @@ exports.getProductionCenters = async (req, res) => {
         WHERE pc.id = ?
       `;
 
-      const params = [id];
+      const params = [Number(id)];
 
       if (scopeFilter === 'department') {
-        singleQuery += ' AND pc.department_id = ?';
+        sql += ' AND pc.department_id = ?';
         params.push(scopeId);
       } else if (scopeFilter === 'district') {
-        singleQuery += ' AND pc.district_id = ?';
+        sql += ' AND pc.district_id = ?';
         params.push(scopeId);
       } else if (scopeFilter === 'block') {
-        singleQuery += ' AND pc.block_id = ?';
+        sql += ' AND pc.block_id = ?';
         params.push(scopeId);
       }
 
-      const [centers] = await db.execute(singleQuery, params);
+      const [rows] = await db.execute(sql, params);
 
-      if (centers.length === 0) {
+      if (!rows.length) {
         return res.status(404).json({
           success: false,
-          error: "Production Center not found or access denied"
+          error: "Not found or access denied"
         });
       }
 
@@ -247,83 +266,79 @@ exports.getProductionCenters = async (req, res) => {
         `SELECT id, certificate_file 
          FROM productioncenter_productioncentercertificate 
          WHERE production_center_id = ?`,
-        [id]
+        [Number(id)]
       );
 
-      const formatted = formatCenterData(centers, certs);
+      const formatted = formatCenterData(rows, certs);
       return res.json(formatted[0]);
     }
 
     // ============================
-    // LIST
+    // LIST QUERY
     // ============================
-    let whereClauses = ["1=1"];
+    let where = ["1=1"];
     let params = [];
 
-    // Scope filter
     if (scopeFilter === 'department') {
-      whereClauses.push('pc.department_id = ?');
+      where.push('pc.department_id = ?');
       params.push(scopeId);
     } else if (scopeFilter === 'district') {
-      whereClauses.push('pc.district_id = ?');
+      where.push('pc.district_id = ?');
       params.push(scopeId);
     } else if (scopeFilter === 'block') {
-      whereClauses.push('pc.block_id = ?');
+      where.push('pc.block_id = ?');
       params.push(scopeId);
     }
 
-    // Search
     if (search) {
-      whereClauses.push(`
-        (pc.name_of_production_centre LIKE ? 
-        OR pc.contact_person LIKE ? 
-        OR pc.mobile_number LIKE ?)
-      `);
+      where.push(`(
+        pc.name_of_production_centre LIKE ? OR
+        pc.contact_person LIKE ? OR
+        pc.mobile_number LIKE ?
+      )`);
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    // Filters
     if (production_type) {
-      whereClauses.push('pc.production_type = ?');
+      where.push('pc.production_type = ?');
       params.push(production_type);
     }
 
     if (status) {
-      whereClauses.push('pc.status = ?');
+      where.push('pc.status = ?');
       params.push(status);
     }
 
-    if (district_ids.length > 0) {
-      const placeholders = district_ids.map(() => '?').join(',');
-      whereClauses.push(`pc.district_id IN (${placeholders})`);
+    if (district_ids.length) {
+      where.push(`pc.district_id IN (${district_ids.map(() => '?').join(',')})`);
       params.push(...district_ids);
     }
 
-    if (block_ids.length > 0) {
-      const placeholders = block_ids.map(() => '?').join(',');
-      whereClauses.push(`pc.block_id IN (${placeholders})`);
+    if (block_ids.length) {
+      where.push(`pc.block_id IN (${block_ids.map(() => '?').join(',')})`);
       params.push(...block_ids);
     }
 
-    const whereString = whereClauses.join(' AND ');
+    const whereSQL = where.join(' AND ');
+    params = cleanParams(params);
 
     // ============================
     // COUNT
     // ============================
-    const countQuery = `
+    const countSQL = `
       SELECT COUNT(*) as total
       FROM productioncenter_productioncenter pc
       ${joins}
-      WHERE ${whereString}
+      WHERE ${whereSQL}
     `;
 
-    const [countRows] = await db.execute(countQuery, params);
-    const totalCount = countRows[0].total;
+    const [countRows] = await db.execute(countSQL, params);
+    const total = countRows[0].total;
 
     // ============================
-    // DATA QUERY
+    // DATA (🔥 FIX HERE)
     // ============================
-    const dataQuery = `
+    const dataSQL = `
       SELECT 
         pc.*,
         dpt.name as department_name,
@@ -332,36 +347,34 @@ exports.getProductionCenters = async (req, res) => {
         v.Village_Name as village_name
       FROM productioncenter_productioncenter pc
       ${joins}
-      WHERE ${whereString}
+      WHERE ${whereSQL}
       ORDER BY pc.id DESC
-      LIMIT ? OFFSET ?
+      LIMIT ${limit} OFFSET ${offset}
     `;
 
-    const [centers] = await db.execute(dataQuery, [...params, limit, offset]);
+    // 🚫 NO LIMIT PARAMS HERE
+    const [rows] = await db.execute(dataSQL, params);
 
     // ============================
-    // CERTIFICATES (FIXED HERE)
+    // CERTS
     // ============================
     let certs = [];
+    const ids = rows.map(r => r.id);
 
-    const centerIds = centers.map(c => c.id);
-
-    if (centerIds.length > 0) {
-      const placeholders = centerIds.map(() => '?').join(',');
-
-      const certQuery = `
-        SELECT id, production_center_id, certificate_file
-        FROM productioncenter_productioncentercertificate
-        WHERE production_center_id IN (${placeholders})
-      `;
-
-      [certs] = await db.execute(certQuery, centerIds);
+    if (ids.length) {
+      const [c] = await db.execute(
+        `SELECT id, production_center_id, certificate_file
+         FROM productioncenter_productioncentercertificate
+         WHERE production_center_id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      );
+      certs = c;
     }
 
-    const formatted = formatCenterData(centers, certs);
+    const formatted = formatCenterData(rows, certs);
 
     return res.json({
-      total: totalCount,
+      total,
       page,
       limit,
       count: formatted.length,
@@ -370,7 +383,7 @@ exports.getProductionCenters = async (req, res) => {
 
   } catch (err) {
     console.error("Error getProductionCenters:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: err.message
     });

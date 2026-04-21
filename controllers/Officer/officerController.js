@@ -555,7 +555,7 @@ const withBaseUrl = (path) => {
   if (!path) return null;
   return `${process.env.BASE_URL}${path}`;
 };
-//  Approve inspection
+//  Get Farmer Orders
 exports.getFarmerOrders = async (req, res) => {
   try {
     const user_id = req.params.userid;
@@ -642,17 +642,22 @@ exports.getFarmerOrders = async (req, res) => {
       let uploadMap = {};
 
       if (inspectionIds.length) {
-        // ✅ FIX: Added cu.name to handle both 'name' and 'first_name/last_name' columns
-        const [uploads] = await db.execute(`
-          SELECT iu.id, iu.inspection_id, iu.image, iu.inspection_address,
-                 iu.latitude, iu.longitude, iu.survey_count, iu.inspected_by,
-                 iu.verification_status, iu.created_at,
-                 cu.first_name, cu.last_name AS user_full_name
-          FROM inspection_uploads iu
-          LEFT JOIN users_customuser cu ON cu.id = iu.inspected_by
-          WHERE iu.inspection_id IN (${inspectionIds.map(() => '?').join(',')})
-          ORDER BY iu.created_at DESC
-        `, inspectionIds);
+        // ✅ UPDATED: Added LEFT JOIN for 'ap' (Approver User) to get approved_by name
+   const [uploads] = await db.execute(`
+  SELECT iu.id, iu.inspection_id, iu.image, iu.inspection_address,
+         iu.latitude, iu.longitude, iu.survey_count, iu.inspected_by,
+         iu.verification_status, iu.created_at, iu.approved_by,
+         cu.first_name, cu.last_name,
+         CONCAT(cu.first_name, ' ', cu.last_name) AS user_full_name,
+         ap.first_name AS approver_first_name, 
+         ap.last_name AS approver_last_name,
+         CONCAT(ap.first_name, ' ', ap.last_name) AS approver_full_name
+  FROM inspection_uploads iu
+  LEFT JOIN users_customuser cu ON cu.id = iu.inspected_by
+  LEFT JOIN users_customuser ap ON ap.id = iu.approved_by
+  WHERE iu.inspection_id IN (${inspectionIds.map(() => '?').join(',')})
+  ORDER BY iu.created_at DESC
+`, inspectionIds);
 
         uploads.forEach(u => {
           if (!uploadMap[u.inspection_id]) uploadMap[u.inspection_id] = [];
@@ -661,14 +666,16 @@ exports.getFarmerOrders = async (req, res) => {
             ? `${process.env.BASE_URL}/uploads/${u.image}` 
             : `/uploads/${u.image}`;
 
-          // ✅ FIX: Safely get name (checks 'user_full_name' first, then falls back to first + last)
-          const inspectorName = u.user_full_name || `${u.first_name || ''} ${u.last_name || ''}`.trim() || "Unknown";
+        const inspectorName = u.user_full_name?.trim() || "Unknown";
 
+const approverName = u.approver_full_name?.trim() || "Unknown";
           uploadMap[u.inspection_id].push({
             id: u.id, image: imagePath, inspection_address: u.inspection_address,
             latitude: u.latitude, longitude: u.longitude, survey_count: u.survey_count,
             inspected_by: u.inspected_by,
             inspected_by_name: inspectorName,
+            approved_by: u.approved_by, // ✅ NEW FIELD
+            approved_by_name: approverName, // ✅ NEW FIELD
             verification_status: u.verification_status || 'pending',
             uploaded_at: u.created_at
           });
@@ -707,6 +714,7 @@ exports.getFarmerOrders = async (req, res) => {
     res.status(500).json({ message: "Server Error", err: err.message });
   }
 };
+
 // 
 exports.uploadInspectionDetails = async (req, res) => {
   try {
@@ -747,15 +755,12 @@ exports.uploadInspectionDetails = async (req, res) => {
       await db.query(sapplingSql, [sapplingValues]);
     }
 
-    // ✅ FIXED: Changed inspectionId to inspection_id here
     const today = new Date().toISOString().split('T')[0];
     const [inspRows] = await db.query(`SELECT remarks FROM inspections WHERE id = ?`, [inspection_id]);
 
     if (inspRows.length > 0) {
       const oldRemarks = inspRows[0].remarks || "";
       const uploadRemark = `Inspection uploaded on ${today} (${survey_count} saplings found).`;
-      
-      // ✅ FIXED: Changed inspectionId to inspection_id here
       await db.query(
         `UPDATE inspections SET inspection_date = ?, remarks = ? WHERE id = ?`,
         [today, oldRemarks ? `${oldRemarks} | ${uploadRemark}` : uploadRemark, inspection_id]
@@ -772,11 +777,11 @@ exports.uploadInspectionDetails = async (req, res) => {
     return res.status(500).json({ message: "Server error", err: error.message });
   }
 };
+
 // 
 exports.createInspection = async (req, res) => {
   try {
     const { request_id, farmer_id, field_inspector_id } = req.body;
-   console.log(request_id, farmer_id, field_inspector_id );
    
     if (!request_id || !farmer_id || !field_inspector_id) {
       return res.status(400).json({ message: "Missing required fields" });
@@ -819,10 +824,12 @@ exports.createInspection = async (req, res) => {
     res.status(500).json({ message: "Server error", err: err.message });
   }
 };
+
 // 
 exports.approveInspection = async (req, res) => {
   try {
     const inspectionId = req.params.id;
+    const { approved_by } = req.body; // ✅ UPDATED: Get admin ID
 
     // Find the LATEST pending upload for this inspection
     const [uploads] = await db.query(`
@@ -839,12 +846,12 @@ exports.approveInspection = async (req, res) => {
 
     const uploadId = uploads[0].id;
 
-    // Update verification status
+    // Update verification status AND approved_by
     await db.query(`
       UPDATE inspection_uploads 
-      SET verification_status = 'approved' 
+      SET verification_status = 'approved', approved_by = ?
       WHERE id = ?
-    `, [uploadId]);
+    `, [approved_by, uploadId]); // ✅ UPDATED: Added approved_by to update
 
     // Add approval remark
     const [inspRows] = await db.query(
@@ -872,13 +879,12 @@ exports.approveInspection = async (req, res) => {
     return res.status(500).json({ message: "Server error", err: error.message });
   }
 };
+
 // 
 exports.rejectInspection = async (req, res) => {
   try {
     const inspectionId = req.params.id;
     const { reason_for_reject } = req.body;
-
-    console.log('Reject inspection:', { inspectionId, reason_for_reject });
 
     // Find the LATEST pending upload
     const [uploads] = await db.query(`
