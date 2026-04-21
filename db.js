@@ -10,7 +10,8 @@ const pool = mysql.createPool({
   waitForConnections: true,
     port: 3306, 
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  namedPlaceholders: true
 });
 
 // Use promise-based queries
