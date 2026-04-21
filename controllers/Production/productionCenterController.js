@@ -142,7 +142,7 @@ exports.getProductionCenters = async (req, res) => {
     const search = query.search;
 
     // ============================
-    // SAFE PAGINATION (STRICT)
+    // SAFE PAGINATION
     // ============================
     let page = Number(query.page);
     let limit = Number(query.limit);
@@ -150,10 +150,8 @@ exports.getProductionCenters = async (req, res) => {
     if (!Number.isInteger(page) || page < 1) page = 1;
     if (!Number.isInteger(limit) || limit < 1) limit = 10;
 
-    const offset = (page - 1) * limit;
-
-    // HARD clamp (extra safety)
     limit = Math.min(limit, 100);
+    const offset = (page - 1) * limit;
 
     // ============================
     // HELPERS
@@ -195,18 +193,21 @@ exports.getProductionCenters = async (req, res) => {
     if (role === 'department_admin') {
       if (!user.department_id)
         return res.status(400).json({ success: false, error: "Department ID required" });
+
       scopeFilter = 'department';
       scopeId = Number(user.department_id);
 
     } else if (role === 'district_admin') {
       if (!user.district_id)
         return res.status(400).json({ success: false, error: "District ID required" });
+
       scopeFilter = 'district';
       scopeId = Number(user.district_id);
 
     } else if (role === 'block_admin') {
       if (!user.block_id)
         return res.status(400).json({ success: false, error: "Block ID required" });
+
       scopeFilter = 'block';
       scopeId = Number(user.block_id);
     }
@@ -333,10 +334,8 @@ exports.getProductionCenters = async (req, res) => {
     const total = countRows[0].total;
 
     // ============================
-    // DATA (🔥 FIX HERE)
+    // DATA
     // ============================
-    // ✅ FIX: Directly inject limit/offset into the SQL string.
-    // This avoids the mysql2 prepared statement bug with LIMIT ? OFFSET ?
     const dataQuery = `
       SELECT 
         pc.*,
@@ -351,7 +350,6 @@ exports.getProductionCenters = async (req, res) => {
       LIMIT ${limit} OFFSET ${offset}
     `;
 
-    // ✅ FIX: Only pass the `params` array now. Do NOT spread limit/offset here.
     const [centers] = await db.execute(dataQuery, params);
 
     // ============================
@@ -360,18 +358,21 @@ exports.getProductionCenters = async (req, res) => {
     let certs = [];
     const centerIds = centers.map(c => c.id);
 
-    if (ids.length) {
+    if (centerIds.length) {
       const [c] = await db.execute(
         `SELECT id, production_center_id, certificate_file
          FROM productioncenter_productioncentercertificate
-         WHERE production_center_id IN (${ids.map(() => '?').join(',')})`,
-        ids
+         WHERE production_center_id IN (${centerIds.map(() => '?').join(',')})`,
+        centerIds
       );
       certs = c;
     }
 
-    const formatted = formatCenterData(rows, certs);
+    const formatted = formatCenterData(centers, certs);
 
+    // ============================
+    // RESPONSE
+    // ============================
     return res.json({
       total,
       page,
@@ -669,8 +670,6 @@ exports.getNearbyProductionCenters = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 exports.getDistrictSummary = async (req, res) => {
   try {
@@ -1005,7 +1004,6 @@ exports.getProductionCenterSummary = async (req, res) => {
     }
 };
 
-
 exports.getDistrictSaplingSummary = async (req, res) => {
     try {
         const [saplings] = await db.query(`
@@ -1102,7 +1100,6 @@ exports.getDistrictSaplingSummary = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
-
 
 exports.getBlockSaplingSummary = async (req, res) => {
     try {
@@ -1219,7 +1216,6 @@ exports.getBlockSaplingSummary = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
-
 
 exports.getProductionCenterSaplingSummary = async (req, res) => {
     try {
