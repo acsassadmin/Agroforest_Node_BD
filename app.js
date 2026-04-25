@@ -26,6 +26,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.send('Hello, Express over HTTPS 🚀');
 });
+// Razorpay
 
 // ✅ Routes
 const userRoutes = require('./routes/users');
@@ -39,6 +40,7 @@ const targetBlockRoutes = require('./routes/targetblock');
 const targetProductionCenterRoutes = require('./routes/targetproductioncenter');
 const dynamicControl = require("./routes/dynamiccontrol")
 const masterRoutes = require("./routes/master");
+const paymentRoutes = require("./routes/payment")
 const former = require("./routes/former");
 
 app.use('/users', userRoutes);
@@ -53,6 +55,7 @@ app.use('/targetproductioncenter', targetProductionCenterRoutes);
 app.use('/master', masterRoutes);
 app.use('/former',former)
 app.use("/dynamic",dynamicControl)
+app.use("/payment", paymentRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ✅ START HTTPS SERVER (instead of app.listen)
 https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {

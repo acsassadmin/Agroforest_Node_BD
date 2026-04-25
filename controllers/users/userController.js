@@ -45,7 +45,7 @@ async function geocodeAddress(address) {
 //     // 3. Normalize & validate phone
 //     const pn = parsePhoneNumberFromString(phone, 'IN');
 //     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
-//     const e164 = pn.number; // e.g., +919789754800
+//     const e164 = pn.number; // e.g., +91 9789754800
 
 //     // 4. Check if user exists by Phone
 //     const [existingPhone] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
@@ -169,7 +169,7 @@ async function geocodeAddress(address) {
 
 //     // 1. Query with JOINs to get Role Name, Production Center ID, and Status
 //     // This query runs directly against the DB every time. No cache here.
-//    const query = `
+//     const query = `
 //       SELECT 
 //         u.id, 
 //         u.username, 
@@ -272,7 +272,7 @@ const formatIndianPhone = (phone) => {
 // ==========================================
 exports.sendLoginOtp = async (req, res) => {
   try {
-    const { phone, expected_role_group } = req.body; // ✅ GRAB expected_role_group
+    const { phone, expected_role_group } = req.body; 
     if (!phone) return res.status(400).json({ message: 'Phone is required' });
 
     const formattedPhone = formatIndianPhone(phone);
@@ -325,12 +325,11 @@ exports.sendLoginOtp = async (req, res) => {
       district_name : user.District_Name,
       block_id: user.block_id,
       block_name :user.Block_Name,
-       production_center_id: user.production_center_id,
+      production_center_id: user.production_center_id,
       production_center_status: user.production_center_status,
       production_type : user.production_type
     };
-    console.log(payload,"payload");
-
+    // console.log(payload,"payload");
     await redisClient.set(`login_${formattedPhone}`, JSON.stringify(payload), { EX: 600 });
     // await sendOtpSms(formattedPhone, otp);
     console.log(otp,"otp")
@@ -341,8 +340,6 @@ exports.sendLoginOtp = async (req, res) => {
   }
 };
 
-
-// ==========================================
 // VERIFY LOGIN OTP
 // ==========================================
 exports.verifyLoginOtp = async (req, res) => {
@@ -350,7 +347,7 @@ exports.verifyLoginOtp = async (req, res) => {
     const { phone, otp } = req.body;
     if (!phone || !otp) return res.status(400).json({ message: 'Phone and OTP required' });
 
-    // Standardize the phone number
+    // Standardize the phone number 
     const formattedPhone = formatIndianPhone(phone);
     if (!formattedPhone) return res.status(400).json({ message: 'Invalid phone number' });
 
@@ -369,7 +366,7 @@ exports.verifyLoginOtp = async (req, res) => {
       role_name: data.role_name,
       department_id: data.department_id,
       district_id: data.district_id,
-    district_name : data.district_name,
+      district_name : data.district_name,
       block_id: data.block_id,
       block_name :data.block_name,
       production_center_id: data.production_center_id || null,
@@ -2262,163 +2259,194 @@ exports.getFarmerRequestItemByStockId = async (req, res) => {
     });
   }
 };
-
-
+// get dashboard counts
 exports.getDashboardCounts = async (req, res) => {
   try {
-    // 1. Get data from Token (Logged in user)
     const user = req.user || {};
+    const role = user.role;
 
-    // 2. Get data from URL Query Params (For Postman Testing)
-    // We prioritize Query Params > Token Data
-    const role = req.query.role || user.role;
     const department_id = req.query.department_id || user.department_id;
     const district_id = req.query.district_id || user.district_id;
     const block_id = req.query.block_id || user.block_id;
 
-    // ---------------------------------------------------------
-    // STRICT ROLE CHECK
-    // ---------------------------------------------------------
-    if (role) {
-
-      // --- Sub-validations for specific roles ---
-      if (role === 'department_admin' && !department_id) {
-        return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
-      }
-      if (role === 'district_admin' && !district_id) {
-        return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
-      }
-      if (role === 'block_admin' && !block_id) {
-        return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
-      }
-
-      // ---------------------------------------------------------
-      // PREPARE DYNAMIC FILTERS
-      // ---------------------------------------------------------
-      let filterColumn = null;
-      let filterValue = null;
-
-      if (role === 'department_admin') {
-        filterColumn = 'department_id';
-        filterValue = department_id;
-      } else if (role === 'district_admin') {
-        filterColumn = 'district_id';
-        filterValue = district_id;
-      } else if (role === 'block_admin') {
-        filterColumn = 'block_id';
-        filterValue = block_id;
-      }
-      // If role is superadmin, filterColumn remains null (No filter applied)
-
-      // Helper for simple table counts
-      const getSimpleCount = async (tableName) => {
-        let query = `SELECT COUNT(*) as count FROM ${tableName}`;
-        let queryParams = [];
-
-        if (filterColumn) {
-          query += ` WHERE ${filterColumn} = ?`;
-          queryParams.push(filterValue);
-        }
-
-        const [rows] = await db.query(query, queryParams);
-        return rows[0]?.count || 0;
-      };
-
-      // Helper for User Role counts
-      const getUserRoleCount = async (targetRoleName) => {
-        let query = `
-                    SELECT COUNT(u.id) as count 
-                    FROM users_customuser u
-                    JOIN users_role r ON u.role_id = r.id
-                    WHERE r.name = ?
-                `;
-        let queryParams = [targetRoleName];
-
-        if (filterColumn) {
-          query += ` AND u.${filterColumn} = ?`;
-          queryParams.push(filterValue);
-        }
-
-        const [rows] = await db.query(query, queryParams);
-        return rows[0]?.count || 0;
-      };
-
-      // ---------------------------------------------------------
-      // FETCH DATA
-      // ---------------------------------------------------------
-      let data = {};
-
-      // A. DEPARTMENT ADMIN COUNT (Only Superadmin)
-      if (role === 'superadmin') {
-        data.department_admin_count = await getUserRoleCount('department_admin');
-      }
-
-      // B. DISTRICT ADMIN COUNT (Superadmin & Dept Admin)
-      if (['superadmin', 'department_admin'].includes(role)) {
-        data.district_admin_count = await getUserRoleCount('district_admin');
-      }
-
-      // C. BLOCK ADMIN COUNT (Superadmin, Dept Admin, Dist Admin)
-      if (['superadmin', 'department_admin', 'district_admin'].includes(role)) {
-        data.block_admin_count = await getUserRoleCount('block_admin');
-      }
-
-      // D. PRODUCTION CENTER COUNT (Visible to all)
-      if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
-        data.production_centers_count = await getSimpleCount('productioncenter_productioncenter');
-      }
-
-      // E. FARMER COUNT (Visible to all)
-      if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
-        data.farmers_count = await getSimpleCount('users_farmeraathardetails');
-      }
-
-      // F. SPECIES IN STOCK COUNT (Visible to all)
-      if (['superadmin', 'department_admin', 'district_admin', 'block_admin'].includes(role)) {
-        let query = `
-                    SELECT COUNT(DISTINCT ps.species_id) as count 
-                    FROM productioncenter_stockdetails ps
-                    JOIN productioncenter_productioncenter pc ON ps.production_center_id = pc.id
-                `;
-        let queryParams = [];
-
-        if (filterColumn) {
-          query += ` WHERE pc.${filterColumn} = ?`;
-          queryParams.push(filterValue);
-        }
-
-        const [specRows] = await db.query(query, queryParams);
-        data.species_in_stock_count = specRows[0]?.count || 0;
-      }
-
-      // ---------------------------------------------------------
-      // SEND SUCCESS RESPONSE
-      // ---------------------------------------------------------
-      res.status(200).json({
-        success: true,
-        data: data
-      });
-
-    } else {
-      // ---------------------------------------------------------
-      // ERROR BLOCK (No Role Found)
-      // ---------------------------------------------------------
+    if (!role) {
       return res.status(400).json({
         success: false,
         error: "User role is required."
       });
     }
 
+    // ---------------------------------------------------------
+    // FILTER (SAFE - LIKE YOUR getOfficers STYLE)
+    // ---------------------------------------------------------
+    let whereClause = '';
+    let params = [];
+
+    if (role === 'department_admin') {
+      whereClause = 'WHERE pc.department_id = ?';
+      params.push(department_id);
+    }
+
+    if (role === 'district_admin') {
+      whereClause = 'WHERE pc.district_id = ?';
+      params.push(district_id);
+    }
+
+    if (role === 'block_admin') {
+      whereClause = 'WHERE pc.block_id = ?';
+      params.push(block_id);
+    }
+
+    // ---------------------------------------------------------
+    // OFFICER COUNT (FROM officer_details)
+    // ---------------------------------------------------------
+    const getOfficerRoleCount = async (roleName) => {
+      let query = `
+        SELECT COUNT(DISTINCT od.id) as count
+        FROM officer_details od
+        JOIN users_role r ON od.role = r.id
+      `;
+
+      let qParams = [];
+
+      if (role === 'department_admin') {
+        query += ' WHERE od.Department = ? AND r.name = ?';
+        qParams.push(department_id, roleName);
+      } else if (role === 'district_admin') {
+        query += ' WHERE od.district_id = ? AND r.name = ?';
+        qParams.push(district_id, roleName);
+      } else if (role === 'block_admin') {
+        query += ' WHERE od.block_id = ? AND r.name = ?';
+        qParams.push(block_id, roleName);
+      } else {
+        query += ' WHERE r.name = ?';
+        qParams.push(roleName);
+      }
+
+      const [rows] = await db.query(query, qParams);
+      return rows[0]?.count || 0;
+    };
+
+    // ---------------------------------------------------------
+    // PRODUCTION CENTER COUNT
+    // ---------------------------------------------------------
+    const getProductionCenterCount = async () => {
+      let query = `
+        SELECT COUNT(*) as count
+        FROM productioncenter_productioncenter pc
+        ${whereClause}
+      `;
+
+      const [rows] = await db.query(query, params);
+      return rows[0]?.count || 0;
+    };
+
+    // ---------------------------------------------------------
+    // FARMER COUNT (FIXED — NO WRONG JOIN)
+    // ---------------------------------------------------------
+    const getFarmerCount = async () => {
+      let query = `
+        SELECT COUNT(*) as count
+        FROM users_farmeraathardetails f
+      `;
+
+      let qParams = [];
+
+      // ⚠️ IMPORTANT:
+      // We DO NOT assume production_center_id exists anymore
+      // Instead we safely try direct filtering OR user mapping
+
+      if (role === 'department_admin') {
+        query += ' WHERE f.department_id = ?';
+        qParams.push(department_id);
+      }
+
+      if (role === 'district_admin') {
+        query += ' WHERE f.district_id = ?';
+        qParams.push(district_id);
+      }
+
+      if (role === 'block_admin') {
+        query += ' WHERE f.block_id = ?';
+        qParams.push(block_id);
+      }
+
+      const [rows] = await db.query(query, qParams);
+      return rows[0]?.count || 0;
+    };
+
+    // ---------------------------------------------------------
+    // SPECIES COUNT (FIXED DISTINCT)
+    // ---------------------------------------------------------
+    const getSpeciesCount = async () => {
+      let query = `
+        SELECT COUNT(*) as count FROM (
+          SELECT DISTINCT ps.species_id
+          FROM productioncenter_stockdetails ps
+          JOIN productioncenter_productioncenter pc 
+            ON ps.production_center_id = pc.id
+          ${whereClause}
+        ) t
+      `;
+
+      const [rows] = await db.query(query, params);
+      return rows[0]?.count || 0;
+    };
+
+    // ---------------------------------------------------------
+    // FINAL RESPONSE (OLD STRUCTURE RESTORED)
+    // ---------------------------------------------------------
+    let data = {};
+
+    if (role === 'superadmin') {
+      data.department_admin_count = await getOfficerRoleCount('department_admin');
+      data.district_admin_count = await getOfficerRoleCount('district_admin');
+      data.block_admin_count = await getOfficerRoleCount('block_admin');
+
+      data.production_centers_count = await getProductionCenterCount();
+      data.farmers_count = await getFarmerCount();
+      data.species_in_stock_count = await getSpeciesCount();
+    }
+
+    else if (role === 'department_admin') {
+      data.district_admin_count = await getOfficerRoleCount('district_admin');
+      data.block_admin_count = await getOfficerRoleCount('block_admin');
+
+      data.production_centers_count = await getProductionCenterCount();
+      data.farmers_count = await getFarmerCount();
+      data.species_in_stock_count = await getSpeciesCount();
+    }
+
+    else if (role === 'district_admin') {
+      data.block_admin_count = await getOfficerRoleCount('block_admin');
+
+      data.production_centers_count = await getProductionCenterCount();
+      data.farmers_count = await getFarmerCount();
+      data.species_in_stock_count = await getSpeciesCount();
+    }
+
+    else if (role === 'block_admin') {
+      data.production_centers_count = await getProductionCenterCount();
+      data.farmers_count = await getFarmerCount();
+      data.species_in_stock_count = await getSpeciesCount();
+    }
+
+    return res.status(200).json({
+      success: true,
+      data
+    });
+
   } catch (err) {
-    console.error("❌ Dashboard Count Error:", err);
-    res.status(500).json({
+    console.error("❌ Dashboard Error:", err);
+
+    return res.status(500).json({
       success: false,
       error: "Failed to fetch dashboard counts",
       details: err.message
     });
   }
 };
-
+// 
 exports.getWeeklyFarmerRequestReport = async (req, res) => {
   try {
     // 1. Get Date, Role, and Scope Params
