@@ -45,7 +45,7 @@ async function geocodeAddress(address) {
 //     // 3. Normalize & validate phone
 //     const pn = parsePhoneNumberFromString(phone, 'IN');
 //     if (!pn || !pn.isValid()) return res.status(400).json({ message: 'Invalid phone number' });
-//     const e164 = pn.number; // e.g., +919789754800
+//     const e164 = pn.number; // e.g., +91 9789754800
 
 //     // 4. Check if user exists by Phone
 //     const [existingPhone] = await db.query('SELECT id FROM users_customuser WHERE phone = ?', [e164]);
@@ -169,7 +169,7 @@ async function geocodeAddress(address) {
 
 //     // 1. Query with JOINs to get Role Name, Production Center ID, and Status
 //     // This query runs directly against the DB every time. No cache here.
-//    const query = `
+//     const query = `
 //       SELECT 
 //         u.id, 
 //         u.username, 
@@ -272,7 +272,7 @@ const formatIndianPhone = (phone) => {
 // ==========================================
 exports.sendLoginOtp = async (req, res) => {
   try {
-    const { phone, expected_role_group } = req.body; // ✅ GRAB expected_role_group
+    const { phone, expected_role_group } = req.body; 
     if (!phone) return res.status(400).json({ message: 'Phone is required' });
 
     const formattedPhone = formatIndianPhone(phone);
@@ -325,12 +325,11 @@ exports.sendLoginOtp = async (req, res) => {
       district_name : user.District_Name,
       block_id: user.block_id,
       block_name :user.Block_Name,
-       production_center_id: user.production_center_id,
+      production_center_id: user.production_center_id,
       production_center_status: user.production_center_status,
       production_type : user.production_type
     };
-    console.log(payload,"payload");
-
+    // console.log(payload,"payload");
     await redisClient.set(`login_${formattedPhone}`, JSON.stringify(payload), { EX: 600 });
     // await sendOtpSms(formattedPhone, otp);
     console.log(otp,"otp")
@@ -341,8 +340,6 @@ exports.sendLoginOtp = async (req, res) => {
   }
 };
 
-
-// ==========================================
 // VERIFY LOGIN OTP
 // ==========================================
 exports.verifyLoginOtp = async (req, res) => {
@@ -350,7 +347,7 @@ exports.verifyLoginOtp = async (req, res) => {
     const { phone, otp } = req.body;
     if (!phone || !otp) return res.status(400).json({ message: 'Phone and OTP required' });
 
-    // Standardize the phone number
+    // Standardize the phone number 
     const formattedPhone = formatIndianPhone(phone);
     if (!formattedPhone) return res.status(400).json({ message: 'Invalid phone number' });
 
@@ -369,7 +366,7 @@ exports.verifyLoginOtp = async (req, res) => {
       role_name: data.role_name,
       department_id: data.department_id,
       district_id: data.district_id,
-    district_name : data.district_name,
+      district_name : data.district_name,
       block_id: data.block_id,
       block_name :data.block_name,
       production_center_id: data.production_center_id || null,

@@ -1,18 +1,19 @@
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
-
+require('dotenv').config()
 // ✅ Initialize Razorpay instance
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-/**
- * CREATE ORDER
- * @param {number} amount - Amount in RUPEES (will be converted to paise)
- * @param {string} receiptId - Unique receipt ID
- */
+// * CREATE ORDER
 async function createRazorpayOrder(amount, receiptId) {
+ try {
+  console.log("init razorpay");
+  console.log("amount",amount);
+  console.log(process.env.RAZORPAY_KEY_ID);
+  console.log(process.env.RAZORPAY_KEY_SECRET);
   const options = {
     amount: Math.round(amount * 100), // Convert rupees to paise
     currency: "INR",
@@ -24,6 +25,9 @@ async function createRazorpayOrder(amount, receiptId) {
 
   const order = await razorpay.orders.create(options);
   return order;
+ } catch (error) {
+  console.log("razorpay error",error);
+ }
 }
 
 /**

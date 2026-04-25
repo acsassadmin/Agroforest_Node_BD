@@ -10,8 +10,8 @@ const sendOtpSms = async (to, otp) => {
   try {
     const message = await client.messages.create({
       body: `Your OTP is: ${otp}`,
-      from:"+16164410732",
-      to: "+918148614356", // ✅ use passed number
+      from: process.env.TWILIO_FROM_NUMBER,
+      to: "+918148614356", 
     });
     console.log(otp,"otp")
     console.log('SMS sent:', message.sid);
@@ -26,9 +26,6 @@ const sendBillLinkSms = async (to, orderId, farmerName) => {
   try {
     const baseUrl = "https://192.168.1.203:3001";
     const billUrl = `${baseUrl}/users/generate-bill-pdf/?order_id=${orderId}`;
-   
-    
-
     const message = await client.messages.create({
       body: `Hi ${farmerName || 'Farmer'}, your bill for Order ${orderId} is ready. View here: ${billUrl}`,
       from:"+16164410732",

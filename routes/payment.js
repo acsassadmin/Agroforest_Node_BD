@@ -1,15 +1,18 @@
 const express = require("express");
 const router = express.Router();
 const { createRazorpayOrder, verifyPayment, fetchPaymentDetails } = require("../Razorpay/razorpay");
+require('dotenv').config()
 
 /**
  * POST /payment/create-order
  * Create a Razorpay order
+ * 
  */
 router.post("/create-order", async (req, res) => {
   try {
     const { amount, order_id } = req.body;
-
+   console.log(amount,order_id);
+   
     if (!amount || amount <= 0) {
       return res.status(400).json({ 
         success: false, 
@@ -32,11 +35,11 @@ router.post("/create-order", async (req, res) => {
 
     res.json({                               
       success: true, 
-      key_id: process.env.RAZORPAY_KEY_ID, // Send key to frontend
-      amount: order.amount,
-      currency: order.currency,
-      razorpay_order_id: order.id,
-      receipt: order.receipt,
+      key_id: process.env.RAZORPAY_KEY_ID, 
+      amount: order?.amount,
+      currency: order?.currency,
+      razorpay_order_id: order?.id,
+      receipt: order?.receipt,
     });
 
 
