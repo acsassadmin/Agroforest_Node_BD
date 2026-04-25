@@ -51,31 +51,13 @@ const clearCache = async () => {
         console.error("Redis Clear Error:", err);
     }
 };
-// create productio scheme 
+
+// 2. POST (Fixed Table Name)
 exports.createProductionScheme = async (req, res) => {
-    const { production_center_id, scheme_id, created_by } = req.body;
+    const { production_center_id, scheme_id , created_by} = req.body;
 
     try {
-        // Step 1: Check if center has valid target quantity for this scheme
-        const [targetData] = await db.query(
-            `SELECT target_quantity, scheme_type 
-             FROM target_productioncenter 
-             WHERE productioncenter_id = ? AND scheme_id = ?`, 
-            [production_center_id, scheme_id]
-        );
-
-        // If no record found OR target_quantity is not valid (null, 0, or negative)
-        if (
-            targetData.length === 0 || 
-            !targetData[0].target_quantity || 
-            targetData[0].target_quantity <= 0
-        ) {
-            return res.status(400).json({ 
-                error: "Cannot assign. No valid target quantity found for this center and scheme combination." 
-            });
-        }
-
-        // Step 2: Check if already assigned in production_center_schemes
+        // Using production_center_schemes
         const [existing] = await db.query(
             `SELECT id FROM production_center_schemes 
              WHERE production_center_id = ? AND scheme_id = ?`, 
@@ -86,20 +68,13 @@ exports.createProductionScheme = async (req, res) => {
             return res.status(409).json({ error: "Already assigned." });
         }
 
-        // Step 3: Insert the assignment
         const [result] = await db.query(
             `INSERT INTO production_center_schemes (production_center_id, scheme_id, created_by) VALUES (?, ?, ?)`,
             [production_center_id, scheme_id, created_by]
         );
 
         await clearCache();
-        
-        res.status(201).json({ 
-            id: result.insertId, 
-            message: "Assigned successfully",
-            target_quantity: targetData[0].target_quantity
-        });
-        
+        res.status(201).json({ id: result.insertId, message: "Assigned successfully" });
     } catch (err) {
         console.error("Create Error:", err);
         res.status(400).json({ error: err.message });
@@ -107,32 +82,14 @@ exports.createProductionScheme = async (req, res) => {
 };
 
 
-//  ADD THIS UPDATE FUNCTION
+// ✅ ADD THIS UPDATE FUNCTION
 exports.updateProductionScheme = async (req, res) => {
     const { id } = req.params; // ID of the mapping record
-    const { production_center_id, scheme_id, updated_by } = req.body;
+    const { production_center_id, scheme_id , updated_by} = req.body;
+
 
     try {
-        // Step 1: Check if the NEW combination has a valid target quantity
-        const [targetData] = await db.query(
-            `SELECT target_quantity 
-             FROM target_productioncenter 
-             WHERE productioncenter_id = ? AND scheme_id = ?`, 
-            [production_center_id, scheme_id]
-        );
-
-        // If no record found OR target_quantity is not valid (null, 0, or negative)
-        if (
-            targetData.length === 0 || 
-            !targetData[0].target_quantity || 
-            targetData[0].target_quantity <= 0
-        ) {
-            return res.status(400).json({ 
-                error: "Cannot update. No valid target quantity found for this new center and scheme combination." 
-            });
-        }
-
-        // Step 2: Check if the NEW combination already exists (excluding the current record ID)
+        // 1. Check if the NEW combination exists (excluding the current record ID)
         const [existing] = await db.query(
             `SELECT id FROM production_center_schemes 
              WHERE production_center_id = ? AND scheme_id = ? AND id != ?`, 
@@ -143,7 +100,7 @@ exports.updateProductionScheme = async (req, res) => {
             return res.status(409).json({ error: "This assignment already exists." });
         }
 
-        // Step 3: Update the record
+        // 2. Update the record
         const [result] = await db.query(
             `UPDATE production_center_schemes 
              SET production_center_id = ?, scheme_id = ?, updated_by = ? 
@@ -151,15 +108,10 @@ exports.updateProductionScheme = async (req, res) => {
             [production_center_id, scheme_id, updated_by, id]
         );
 
-        // Safety check: If no rows were affected, the ID doesn't exist
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: "Assignment record not found." });
-        }
-
-        // Step 4: Clear Cache
+        // 3. Clear Cache
         await clearCache();
 
-        // Step 5: Return updated record
+        // 4. Return updated record
         const [rows] = await db.query(`SELECT * FROM production_center_schemes WHERE id = ?`, [id]);
         res.json(rows[0]);
 
