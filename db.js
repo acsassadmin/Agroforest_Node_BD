@@ -5,10 +5,10 @@ const mysql = require('mysql2');
 const pool = mysql.createPool({
   host: 'localhost',       
   user: 'root',
-  password: '12345',
+  password: '',
   database: 'agroforest',
   waitForConnections: true,
-    port: 330, 
+    port: 3306, 
   connectionLimit: 10,
   queueLimit: 0,
   namedPlaceholders: true
