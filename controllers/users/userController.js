@@ -2664,118 +2664,76 @@ exports.getProductionCentersList = async (req, res) => {
 
 exports.getTargetDetails = async (req, res) => {
   try {
-    // 1. Get Data from Token & Query Params
     const user = req.user || {};
-
     const role = req.query.role || user.role;
-    const target_level = req.query.target_level; // department, district, block, productioncenter
+    const target_level = req.query.target_level; 
 
     const department_id = req.query.department_id || user.department_id;
     const district_id = req.query.district_id || user.district_id;
     const block_id = req.query.block_id || user.block_id;
 
-    // ---------------------------------------------------------
-    // 1. VALIDATION
-    // ---------------------------------------------------------
     if (!target_level) {
       return res.status(400).json({ success: false, error: "Query param 'target_level' is required." });
     }
+    if (role === 'department_admin' && !department_id) return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
+    if (role === 'district_admin' && !district_id) return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
+    if (role === 'block_admin' && !block_id) return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
 
-    // Strict Role Checks (Ensure ID exists for the role)
-    if (role === 'department_admin' && !department_id) {
-      return res.status(400).json({ success: false, error: "Department ID is required for Department Admin." });
-    }
-    if (role === 'district_admin' && !district_id) {
-      return res.status(400).json({ success: false, error: "District ID is required for District Admin." });
-    }
-    if (role === 'block_admin' && !block_id) {
-      return res.status(400).json({ success: false, error: "Block ID is required for Block Admin." });
-    }
-
-    // ---------------------------------------------------------
-    // 2. PREPARE QUERY VARIABLES
-    // ---------------------------------------------------------
     let query = "";
     let queryParams = [];
-    let whereClauses = []; // Collects WHERE conditions
+    let whereClauses = [];
 
-    // ---------------------------------------------------------
-    // 3. DYNAMIC QUERY BUILDER
-    // ---------------------------------------------------------
-
-    // A. TARGET LEVEL: DEPARTMENT
+    // A. DEPARTMENT
     if (target_level === 'department') {
       query = `
-                SELECT 
-                    td.id,
-                    td.target_tag,
-                    td.target_quantity,
-                    td.financial_year,
-                    td.created_at,
-                    d.name AS department_name,
-                    u.username AS created_by_name
-                FROM target_department td
-                LEFT JOIN department d ON td.department_id = d.id
-                LEFT JOIN users_customuser u ON td.created_by = u.id
-            `;
-
-      // Filter Logic for Department Table
+        SELECT td.id, td.target_tag, td.target_quantity, td.financial_year, td.created_at,
+               d.name AS department_name, u.username AS created_by_name
+        FROM target_department td
+        LEFT JOIN department d ON td.department_id = d.id
+        LEFT JOIN users_customuser u ON td.created_by = u.id
+      `;
       if (role === 'department_admin') {
         whereClauses.push("td.department_id = ?");
         queryParams.push(department_id);
       }
-      // Superadmin sees all (No filter)
-
     }
 
-    // B. TARGET LEVEL: DISTRICT
+    // B. DISTRICT (✅ FIXED back to target_department_id)
     else if (target_level === 'district') {
       query = `
-                SELECT 
-                    tdis.id,
-                    tdis.target_quantity,
-                    tdis.start_date,
-                    tdis.end_date,
-                    tdis.status,
-                    tdis.created_at,
-                    dis.District_Name AS district_name,
-                    u.username AS created_by_name
-                FROM target_district tdis
-                LEFT JOIN master_district dis ON tdis.district_id = dis.id
-                LEFT JOIN users_customuser u ON tdis.created_by = u.id
-            `;
-
-      // Filter Logic for District Table
+        SELECT tdis.id, tdis.target_quantity, tdis.start_date, tdis.end_date, tdis.status, tdis.created_at,
+               dis.District_Name AS district_name,
+               d.name AS department_name,
+               u.username AS created_by_name
+        FROM target_district tdis
+        LEFT JOIN master_district dis ON tdis.district_id = dis.id
+        LEFT JOIN department d ON tdis.target_department_id = d.id
+        LEFT JOIN users_customuser u ON tdis.created_by = u.id
+      `;
       if (role === 'department_admin') {
-        // As requested: Filter by department_id column in this table
         whereClauses.push("tdis.target_department_id = ?");
         queryParams.push(department_id);
       } else if (role === 'district_admin') {
         whereClauses.push("tdis.district_id = ?");
         queryParams.push(district_id);
       }
-
     }
 
-    // C. TARGET LEVEL: BLOCK
+    // C. BLOCK (✅ FIXED back to target_department_id)
     else if (target_level === 'block') {
       query = `
-                SELECT 
-                    tb.id,
-                    tb.target_quantity,
-                    tb.start_date,
-                    tb.end_date,
-                    tb.created_at,
-                    b.Block_Name AS block_name,
-                    u.username AS created_by_name
-                FROM target_block tb
-                LEFT JOIN master_block b ON tb.block_id = b.id
-                LEFT JOIN users_customuser u ON tb.created_by = u.id
-            `;
-
-      // Filter Logic for Block Table
+        SELECT tb.id, tb.target_quantity, tb.start_date, tb.end_date, tb.created_at,
+               b.Block_Name AS block_name,
+               dis.District_Name AS district_name,
+               d.name AS department_name,
+               u.username AS created_by_name
+        FROM target_block tb
+        LEFT JOIN master_block b ON tb.block_id = b.id
+        LEFT JOIN master_district dis ON tb.district_id = dis.id
+        LEFT JOIN department d ON tb.target_department_id = d.id
+        LEFT JOIN users_customuser u ON tb.created_by = u.id
+      `;
       if (role === 'department_admin') {
-        // Filter by department_id column in this table
         whereClauses.push("tb.target_department_id = ?");
         queryParams.push(department_id);
       } else if (role === 'district_admin') {
@@ -2785,28 +2743,25 @@ exports.getTargetDetails = async (req, res) => {
         whereClauses.push("tb.block_id = ?");
         queryParams.push(block_id);
       }
-
     }
 
-    // D. TARGET LEVEL: PRODUCTION CENTER
+    // D. PRODUCTION CENTER (✅ FIXED back to target_department_id)
     else if (target_level === 'productioncenter') {
       query = `
-                SELECT 
-                    tpc.id,
-                    tpc.target_quantity,
-                    tpc.start_date,
-                    tpc.end_date,
-                    tpc.created_at,
-                    pc.name_of_production_centre AS production_center_name,
-                    u.username AS created_by_name
-                FROM target_productioncenter tpc
-                LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
-                LEFT JOIN users_customuser u ON tpc.created_by = u.id
-            `;
-
-      // Filter Logic for Production Center Table
+        SELECT tpc.id, tpc.target_quantity, tpc.start_date, tpc.end_date, tpc.created_at,
+               pc.name_of_production_centre AS production_center_name,
+               b.Block_Name AS block_name,
+               dis.District_Name AS district_name,
+               d.name AS department_name,
+               u.username AS created_by_name
+        FROM target_productioncenter tpc
+        LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
+        LEFT JOIN master_block b ON tpc.block_id = b.id
+        LEFT JOIN master_district dis ON tpc.district_id = dis.id
+        LEFT JOIN department d ON tpc.target_department_id = d.id
+        LEFT JOIN users_customuser u ON tpc.created_by = u.id
+      `;
       if (role === 'department_admin') {
-        // Filter by department_id column in this table
         whereClauses.push("tpc.target_department_id = ?");
         queryParams.push(department_id);
       } else if (role === 'district_admin') {
@@ -2816,19 +2771,14 @@ exports.getTargetDetails = async (req, res) => {
         whereClauses.push("tpc.block_id = ?");
         queryParams.push(block_id);
       }
-
     } else {
       return res.status(400).json({ success: false, error: "Invalid target_level provided." });
     }
 
-    // ---------------------------------------------------------
-    // 4. FINALIZE QUERY (Append WHERE clauses)
-    // ---------------------------------------------------------
     if (whereClauses.length > 0) {
       query += " WHERE " + whereClauses.join(" AND ");
     }
 
-    // Execute
     const [rows] = await db.query(query, queryParams);
 
     res.status(200).json({

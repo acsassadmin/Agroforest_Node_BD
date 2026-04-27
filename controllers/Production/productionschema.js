@@ -3,7 +3,7 @@ const redisClient = require('../../redisClient');
 
 const CACHE_KEY = 'production_schemes_list';
 
-// 1. GET
+// GET
 exports.getProductionSchemes = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -43,7 +43,46 @@ exports.getProductionSchemes = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+// get target scheme
+exports.getTargetSchemes = async (req, res) => {
+    try {
+        const { productioncenter_id } = req.query;
 
+        if (!productioncenter_id) {
+            return res.status(400).json({ error: "productioncenter_id is required" });
+        }
+
+        const query = `
+            SELECT DISTINCT
+                tp.scheme_id AS id,
+                s.name,
+                s.percentage,
+                tp.target_quantity
+            FROM target_productioncenter tp
+            JOIN tn_schema s ON tp.scheme_id = s.id
+            WHERE tp.productioncenter_id = ?
+              AND tp.target_quantity IS NOT NULL
+              AND tp.target_quantity > 0
+            ORDER BY s.name ASC
+        `;
+
+        const [rows] = await db.query(query, [productioncenter_id]);
+
+        const result = rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            percentage: parseFloat(row.percentage) || 0,
+            target_quantity: parseInt(row.target_quantity) || 0
+        }));
+
+        res.json(result);
+
+    } catch (err) {
+        console.error("Error fetching target schemes:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+// clear cache
 const clearCache = async () => {
     try {
         await redisClient.del(CACHE_KEY);
@@ -51,8 +90,7 @@ const clearCache = async () => {
         console.error("Redis Clear Error:", err);
     }
 };
-
-// 2. POST (Fixed Table Name)
+// POST (Fixed Table Name)
 exports.createProductionScheme = async (req, res) => {
     const { production_center_id, scheme_id , created_by} = req.body;
 
@@ -80,9 +118,7 @@ exports.createProductionScheme = async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 };
-
-
-// ✅ ADD THIS UPDATE FUNCTION
+// ADD THIS UPDATE FUNCTION
 exports.updateProductionScheme = async (req, res) => {
     const { id } = req.params; // ID of the mapping record
     const { production_center_id, scheme_id , updated_by} = req.body;
@@ -120,9 +156,7 @@ exports.updateProductionScheme = async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 };
-
-
-// 3. DELETE (Fixed Table Name)
+// DELETE (Fixed Table Name)
 exports.deleteProductionScheme = async (req, res) => {
     const { id } = req.params;
     if (!id) return res.status(400).json({ error: "ID is required" });

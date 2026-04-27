@@ -62,7 +62,6 @@ router.put('/stock-requests/', authenticateToken, stockController.handleStockReq
 router.get('/production-centers/excel/', authenticateToken, stockController.downloadExcel);
 router.get('/dashboard-summary/', authenticateToken, stockController.getDashboardSummary);
 
-
 // GET ALL (uses same function as below)
 router.get('/schema/', stockController.getScheme);
 router.get('/schema/:id', authenticateToken, stockController.getScheme);
@@ -70,12 +69,11 @@ router.post('/schema/', authenticateToken, stockController.createScheme);
 router.put('/schema/:id', authenticateToken, stockController.updateScheme);
 router.delete('/schema/:id', authenticateToken, stockController.deleteScheme);
 
-
+router.get('/target-schemes', productionschemaController.getTargetSchemes);
 router.get('/productioncenter-scheme/', productionschemaController.getProductionSchemes);
 router.post('/productioncenter-scheme/', productionschemaController.createProductionScheme);
 router.put('/productioncenter-scheme/:id', productionschemaController.updateProductionScheme);
 router.delete('/productioncenter-scheme/:id', productionschemaController.deleteProductionScheme);
-
 
 module.exports = router;
 
