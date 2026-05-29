@@ -1,135 +1,149 @@
-const db = require('../../db'); 
-const multer = require('multer');
-const path = require('path');
-const redisClient = require('../../redisClient'); 
+const db = require("../../db");
+const multer = require("multer");
+const path = require("path");
+const redisClient = require("../../redisClient");
 
 // --- FILE UPLOAD CONFIGURATION ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/production_center_certificates/');
+    cb(null, "uploads/production_center_certificates/");
   },
   filename: (req, file, cb) => {
     cb(null, Date.now() + path.extname(file.originalname));
-  }
+  },
 });
 const upload = multer({ storage: storage });
-exports.uploadMiddleware = upload.array('certificate_file', 10);
+exports.uploadMiddleware = upload.array("certificate_file", 10);
 
 // --- HELPER: Clear Cache ---
 // We need to clear cache whenever data changes (POST, PUT, DELETE)
 const clearProductionCenterCache = async () => {
-    // Note: Using .keys is okay for small apps. For large apps, use versioning or sets.
-    const keys = await redisClient.keys('*production_center_*');
-    if (keys.length > 0) await redisClient.del(keys);
-    
-    const typeKeys = await redisClient.keys('*prod_type_*');
-    if (typeKeys.length > 0) await redisClient.del(typeKeys);
+  // Note: Using .keys is okay for small apps. For large apps, use versioning or sets.
+  const keys = await redisClient.keys("*production_center_*");
+  if (keys.length > 0) await redisClient.del(keys);
+
+  const typeKeys = await redisClient.keys("*prod_type_*");
+  if (typeKeys.length > 0) await redisClient.del(typeKeys);
 };
 
 // --- PRODUCTION CENTER TYPES LOGIC ---
 
 exports.getProductionCenterTypes = async (req, res) => {
-    try {
-        const { id, search, page = 1 } = req.query;
-        
-        // 1. Define Cache Key
-        const cacheKey = `prod_type_${id || 'all'}_${search || 'na'}_page${page}`;
+  try {
+    const { id, search, page = 1 } = req.query;
 
-        // 2. Check Redis
-        const cachedData = await redisClient.get(cacheKey);
-        if (cachedData) {
-            return res.json(JSON.parse(cachedData));
-        }
+    // 1. Define Cache Key
+    const cacheKey = `prod_type_${id || "all"}_${search || "na"}_page${page}`;
 
-        // 3. Database Logic
-        if (id) {
-            const [rows] = await db.query('SELECT * FROM productioncenter_productioncentertypes WHERE id = ?', [id]);
-            if (rows.length === 0) return res.status(404).json({ error: "Type not found" });
-            
-            await redisClient.set(cacheKey, JSON.stringify(rows[0]), { EX: 3600 });
-            return res.json(rows[0]);
-        }
-
-        let query = 'SELECT * FROM productioncenter_productioncentertypes';
-        const params = [];
-        if (search) {
-            query += ' WHERE name LIKE ?';
-            params.push(`%${search}%`);
-        }
-        query += ' ORDER BY id DESC';
-
-        const [rows] = await db.query(query, params);
-        const responseData = { count: rows.length, results: rows };
-
-        // 4. Set Redis
-        await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 3600 });
-        res.json(responseData);
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    // 2. Check Redis
+    const cachedData = await redisClient.get(cacheKey);
+    if (cachedData) {
+      return res.json(JSON.parse(cachedData));
     }
+
+    // 3. Database Logic
+    if (id) {
+      const [rows] = await db.query(
+        "SELECT * FROM productioncenter_productioncentertypes WHERE id = ?",
+        [id],
+      );
+      if (rows.length === 0)
+        return res.status(404).json({ error: "Type not found" });
+
+      await redisClient.set(cacheKey, JSON.stringify(rows[0]), { EX: 3600 });
+      return res.json(rows[0]);
+    }
+
+    let query = "SELECT * FROM productioncenter_productioncentertypes";
+    const params = [];
+    if (search) {
+      query += " WHERE name LIKE ?";
+      params.push(`%${search}%`);
+    }
+    query += " ORDER BY id DESC";
+
+    const [rows] = await db.query(query, params);
+    const responseData = { count: rows.length, results: rows };
+
+    // 4. Set Redis
+    await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 3600 });
+    res.json(responseData);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.createProductionCenterType = async (req, res) => {
-    try {
-        const { name } = req.body;
-        const [result] = await db.query('INSERT INTO productioncenter_productioncentertypes (name) VALUES (?)', [name]);
-        
-        await clearProductionCenterCache(); 
-        
-        res.status(201).json({ id: result.insertId, name });
-    } catch (err) {
-        res.status(400).json({ error: err.message });
-    }
+  try {
+    const { name } = req.body;
+    const [result] = await db.query(
+      "INSERT INTO productioncenter_productioncentertypes (name) VALUES (?)",
+      [name],
+    );
+
+    await clearProductionCenterCache();
+
+    res.status(201).json({ id: result.insertId, name });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 };
 
 exports.updateProductionCenterType = async (req, res) => {
-    try {
-        const { id } = req.query;
-        if (!id) return res.status(400).json({ error: "id is required" });
+  try {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: "id is required" });
 
-        const { name } = req.body;
-        await db.query('UPDATE productioncenter_productioncentertypes SET name = ? WHERE id = ?', [name, id]);
-        
-        await clearProductionCenterCache(); // Clear Cache
+    const { name } = req.body;
+    await db.query(
+      "UPDATE productioncenter_productioncentertypes SET name = ? WHERE id = ?",
+      [name, id],
+    );
 
-        const [rows] = await db.query('SELECT * FROM productioncenter_productioncentertypes WHERE id = ?', [id]);
-        res.json(rows[0]);
-    } catch (err) {
-        res.status(400).json({ error: err.message });
-    }
+    await clearProductionCenterCache(); // Clear Cache
+
+    const [rows] = await db.query(
+      "SELECT * FROM productioncenter_productioncentertypes WHERE id = ?",
+      [id],
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 };
 
 exports.deleteProductionCenterType = async (req, res) => {
-    try {
-        const { id } = req.query;
-        if (!id) return res.status(400).json({ error: "id is required" });
-        
-        await db.query('DELETE FROM productioncenter_productioncentertypes WHERE id = ?', [id]);
-        
-        await clearProductionCenterCache(); // Clear Cache
-        
-        res.status(204).send();
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-};
+  try {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: "id is required" });
 
+    await db.query(
+      "DELETE FROM productioncenter_productioncentertypes WHERE id = ?",
+      [id],
+    );
+
+    await clearProductionCenterCache(); // Clear Cache
+
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 // --- HELPER FUNCTION FOR SERIALIZER STRUCTURE ---
 const formatCenterData = (centers, certificates) => {
-    return centers.map(center => {
-        const centerCerts = certificates
-            .filter(cert => cert.production_center_id === center.id)
-            .map(cert => ({
-                id: cert.id,
-                certificate_file: cert.certificate_file
-            }));
-        return {
-            ...center,
-            certificates: centerCerts
-        };
-    });
+  return centers.map((center) => {
+    const centerCerts = certificates
+      .filter((cert) => cert.production_center_id === center.id)
+      .map((cert) => ({
+        id: cert.id,
+        certificate_file: cert.certificate_file,
+      }));
+    return {
+      ...center,
+      certificates: centerCerts,
+    };
+  });
 };
 
 // --- PRODUCTION CENTER LOGIC ---
@@ -165,13 +179,13 @@ exports.getProductionCenters = async (req, res) => {
 
       return param
         .toString()
-        .split(',')
-        .map(v => Number(v.trim()))
+        .split(",")
+        .map((v) => Number(v.trim()))
         .filter(Number.isInteger);
     };
 
     const cleanParams = (arr) =>
-      arr.filter(v => v !== undefined && v !== null);
+      arr.filter((v) => v !== undefined && v !== null);
 
     // ============================
     // FILTER INPUTS
@@ -190,25 +204,29 @@ exports.getProductionCenters = async (req, res) => {
     let scopeFilter = null;
     let scopeId = null;
 
-    if (role === 'department_admin') {
+    if (role === "department_admin") {
       if (!user.department_id)
-        return res.status(400).json({ success: false, error: "Department ID required" });
+        return res
+          .status(400)
+          .json({ success: false, error: "Department ID required" });
 
-      scopeFilter = 'department';
+      scopeFilter = "department";
       scopeId = Number(user.department_id);
-
-    } else if (role === 'district_admin') {
+    } else if (role === "district_admin") {
       if (!user.district_id)
-        return res.status(400).json({ success: false, error: "District ID required" });
+        return res
+          .status(400)
+          .json({ success: false, error: "District ID required" });
 
-      scopeFilter = 'district';
+      scopeFilter = "district";
       scopeId = Number(user.district_id);
-
-    } else if (role === 'block_admin') {
+    } else if (role === "block_admin") {
       if (!user.block_id)
-        return res.status(400).json({ success: false, error: "Block ID required" });
+        return res
+          .status(400)
+          .json({ success: false, error: "Block ID required" });
 
-      scopeFilter = 'block';
+      scopeFilter = "block";
       scopeId = Number(user.block_id);
     }
 
@@ -240,14 +258,14 @@ exports.getProductionCenters = async (req, res) => {
 
       const params = [Number(id)];
 
-      if (scopeFilter === 'department') {
-        sql += ' AND pc.department_id = ?';
+      if (scopeFilter === "department") {
+        sql += " AND pc.department_id = ?";
         params.push(scopeId);
-      } else if (scopeFilter === 'district') {
-        sql += ' AND pc.district_id = ?';
+      } else if (scopeFilter === "district") {
+        sql += " AND pc.district_id = ?";
         params.push(scopeId);
-      } else if (scopeFilter === 'block') {
-        sql += ' AND pc.block_id = ?';
+      } else if (scopeFilter === "block") {
+        sql += " AND pc.block_id = ?";
         params.push(scopeId);
       }
 
@@ -256,7 +274,7 @@ exports.getProductionCenters = async (req, res) => {
       if (!rows.length) {
         return res.status(404).json({
           success: false,
-          error: "Not found or access denied"
+          error: "Not found or access denied",
         });
       }
 
@@ -264,7 +282,7 @@ exports.getProductionCenters = async (req, res) => {
         `SELECT id, certificate_file 
          FROM productioncenter_productioncentercertificate 
          WHERE production_center_id = ?`,
-        [Number(id)]
+        [Number(id)],
       );
 
       const formatted = formatCenterData(rows, certs);
@@ -277,14 +295,14 @@ exports.getProductionCenters = async (req, res) => {
     let where = ["1=1"];
     let params = [];
 
-    if (scopeFilter === 'department') {
-      where.push('pc.department_id = ?');
+    if (scopeFilter === "department") {
+      where.push("pc.department_id = ?");
       params.push(scopeId);
-    } else if (scopeFilter === 'district') {
-      where.push('pc.district_id = ?');
+    } else if (scopeFilter === "district") {
+      where.push("pc.district_id = ?");
       params.push(scopeId);
-    } else if (scopeFilter === 'block') {
-      where.push('pc.block_id = ?');
+    } else if (scopeFilter === "block") {
+      where.push("pc.block_id = ?");
       params.push(scopeId);
     }
 
@@ -298,26 +316,28 @@ exports.getProductionCenters = async (req, res) => {
     }
 
     if (production_type) {
-      where.push('pc.production_type = ?');
+      where.push("pc.production_type = ?");
       params.push(production_type);
     }
 
     if (status) {
-      where.push('pc.status = ?');
+      where.push("pc.status = ?");
       params.push(status);
     }
 
     if (district_ids.length) {
-      where.push(`pc.district_id IN (${district_ids.map(() => '?').join(',')})`);
+      where.push(
+        `pc.district_id IN (${district_ids.map(() => "?").join(",")})`,
+      );
       params.push(...district_ids);
     }
 
     if (block_ids.length) {
-      where.push(`pc.block_id IN (${block_ids.map(() => '?').join(',')})`);
+      where.push(`pc.block_id IN (${block_ids.map(() => "?").join(",")})`);
       params.push(...block_ids);
     }
 
-    const whereSQL = where.join(' AND ');
+    const whereSQL = where.join(" AND ");
     params = cleanParams(params);
 
     // ============================
@@ -356,14 +376,14 @@ exports.getProductionCenters = async (req, res) => {
     // CERTIFICATES
     // ============================
     let certs = [];
-    const centerIds = centers.map(c => c.id);
+    const centerIds = centers.map((c) => c.id);
 
     if (centerIds.length) {
       const [c] = await db.execute(
         `SELECT id, production_center_id, certificate_file
          FROM productioncenter_productioncentercertificate
-         WHERE production_center_id IN (${centerIds.map(() => '?').join(',')})`,
-        centerIds
+         WHERE production_center_id IN (${centerIds.map(() => "?").join(",")})`,
+        centerIds,
       );
       certs = c;
     }
@@ -378,14 +398,13 @@ exports.getProductionCenters = async (req, res) => {
       page,
       limit,
       count: formatted.length,
-      results: formatted
+      results: formatted,
     });
-
   } catch (err) {
     console.error("Error getProductionCenters:", err);
     return res.status(500).json({
       success: false,
-      error: err.message
+      error: err.message,
     });
   }
 };
@@ -412,185 +431,254 @@ exports.getProduction = async (req, res) => {
     const [centers] = await db.execute(query, params);
 
     res.json(centers);
-
   } catch (err) {
     console.error("Error getProductionCenters:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 };
-
+// create production center
 exports.createProductionCenter = async (req, res) => {
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
+  const connection = await db.getConnection();
 
-        const body = req.body;
-        const files = req.files;
-        const userId = req.user?.id || 1; 
+  try {
+    await connection.beginTransaction();
 
-        // 1️⃣ Insert Production Center
-        const [result] = await connection.query(
-            `INSERT INTO productioncenter_productioncenter
-            (production_type, status, name_of_production_centre,
-             complete_address, district_id, block_id, village_id, contact_person, mobile_number,
-             latitude, longitude, nursery_capacity, certification_details, nursery_category , department_id , area , created_by_id , created_at )
-            VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? ,NOW() )`, 
-            [
-                body.production_type || 'government',
-                body.name_of_production_centre,
-                body.complete_address,
-                body.district_id,
-                body.block_id,
-                body.village_id,
-                body.contact_person,
-                body.mobile_number,
-                body.latitude,
-                body.longitude,
-                body.nursery_capacity,
-                body.certification_details,
-                body.nursery_category,
-                body.department_id,
-                body.area_acres,
-                userId
-            ]
-        );
+    const body = req.body;
+    const files = req.files;
+    const userId = req.user?.id || 1;
+    const user = req.user;
 
-        const centerId = result.insertId;
+    const { user_name } = body;
+    console.log("user", user_name);
+    // 1️⃣ Validate username + mobile
+    const [userCheck] = await connection.query(
+      `
+      SELECT id
+      FROM production_user_codes
+      WHERE username = ?
+      `,
+      [user_name],
+    );
 
-        //  Generate unique center code
-        const code = `PDC${centerId.toString().padStart(4, '0')}`;
-        await connection.query(
-            'UPDATE productioncenter_productioncenter SET production_center_code = ? WHERE id = ?',
-            [code, centerId]
-        );
-
-        //  Save uploaded certificates
-        if (files && files.length > 0) {
-            const certValues = files.map(file => [centerId, file.path]);
-            await connection.query(
-                'INSERT INTO productioncenter_productioncentercertificate (production_center_id, certificate_file) VALUES ?',
-                [certValues]
-            );
-        }
-
-        //  Auto-generate certificate for private centers
-        if (body.production_type === 'private') {
-            console.log('Private center: generate certificate PDF');
-        }
-
-        // Commit transaction
-        await connection.commit();
-
-        // ✅ CLEAR CACHE: Remove stored cache after successful creation
-        if (typeof clearProductionCenterCache === 'function') {
-            await clearProductionCenterCache();
-        }
-
-        res.status(201).json({
-            id: centerId,
-            production_center_code: code,
-            status: 'pending'
-        });
-
-    } catch (err) {
-        await connection.rollback();
-        console.error("Create Production Center Error:", err);
-        res.status(400).json({ error: err.message });
-    } finally {
-        connection.release();
+    if (userCheck.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        error: "Invalid username or mobile number",
+      });
     }
+
+    const productionUserNameId = userCheck[0].id;
+
+    // 2️⃣ Insert Production Center
+    const [result] = await connection.query(
+      `
+      INSERT INTO productioncenter_productioncenter
+      (
+        production_type,
+        status,
+        name_of_production_centre,
+        complete_address,
+        district_id,
+        block_id,
+        village_id,
+        contact_person,
+        mobile_number,
+        latitude,
+        longitude,
+        nursery_capacity,
+        certification_details,
+        nursery_category,
+        department_id,
+        area,
+        created_by_id,
+        production_user_name_id,
+        created_at
+      )
+      VALUES
+      (
+        ?,
+        'pending',
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        NOW()
+      )
+      `,
+      [
+        body.production_type || "government",
+        body.name_of_production_centre,
+        body.complete_address,
+        body.district_id,
+        body.block_id,
+        body.village_id,
+        body.contact_person,
+        body.mobile_number,
+        body.latitude,
+        body.longitude,
+        body.nursery_capacity,
+        body.certification_details,
+        body.nursery_category,
+        body.department_id,
+        body.area,
+        userId,
+        productionUserNameId,
+      ],
+    );
+
+    const centerId = result.insertId;
+
+    // 3️⃣ Generate center code
+    const code = `PDC${centerId.toString().padStart(4, "0")}`;
+
+    await connection.query(
+      `
+      UPDATE productioncenter_productioncenter
+      SET production_center_code = ?
+      WHERE id = ?
+      `,
+      [code, centerId],
+    );
+
+    // 4️⃣ Save certificates
+    if (files && files.length > 0) {
+      const certValues = files.map((file) => [centerId, file.path]);
+
+      await connection.query(
+        `
+        INSERT INTO productioncenter_productioncentercertificate
+        (production_center_id, certificate_file)
+        VALUES ?
+        `,
+        [certValues],
+      );
+    }
+
+    await connection.commit();
+
+    return res.status(201).json({
+      id: centerId,
+      production_center_code: code,
+      production_user_name_id: productionUserNameId,
+      status: "pending",
+    });
+  } catch (err) {
+    await connection.rollback();
+
+    return res.status(500).json({
+      error: err.message,
+    });
+  } finally {
+    connection.release();
+  }
 };
 
+// ----
 exports.updateProductionCenter = async (req, res) => {
-    try {
-        const { id } = req.query;
-        if (!id) return res.status(400).json({ error: "ID is required" });
+  try {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: "ID is required" });
 
-        const body = req.body;
+    const body = req.body;
 
-        const allowedFields = [
-            'status', 
-            'status_updated_by', 
-            'rejected_comment',
-            'name_of_production_centre', 
-            'contact_person', 
-            'mobile_number', 
-            'district_id', 
-            'block_id', 
-            'village_id', 
-            'department_id',
-            'latitude', 
-            'longitude', 
-            'complete_address', 
-            'nursery_category', 
-            'nursery_capacity'
-        ];
+    const allowedFields = [
+      "status",
+      "status_updated_by",
+      "rejected_comment",
+      "name_of_production_centre",
+      "contact_person",
+      "mobile_number",
+      "district_id",
+      "block_id",
+      "village_id",
+      "department_id",
+      "latitude",
+      "longitude",
+      "complete_address",
+      "nursery_category",
+      "nursery_capacity",
+    ];
 
-        // 2. Build Dynamic Query
-        const updates = [];
-        const values = [];
+    // 2. Build Dynamic Query
+    const updates = [];
+    const values = [];
 
-        allowedFields.forEach(field => {
-            // Only add to query if the field exists in the request body
-            if (body[field] !== undefined) {
-                updates.push(`${field} = ?`);
-                values.push(body[field]);
-            }
-        });
+    allowedFields.forEach((field) => {
+      // Only add to query if the field exists in the request body
+      if (body[field] !== undefined) {
+        updates.push(`${field} = ?`);
+        values.push(body[field]);
+      }
+    });
 
-        if (updates.length === 0) {
-            return res.status(400).json({ error: "No valid fields provided for update" });
-        }
-
-        // 3. Execute Update
-        values.push(id); // Add ID for WHERE clause
-        await db.query(
-            `UPDATE productioncenter_productioncenter SET ${updates.join(', ')} WHERE id = ?`, 
-            values
-        );
-
-        // 4. Return Updated Data
-        // Reuse the GET function to return the formatted result
-        req.query.id = id;
-        return exports.getProductionCenters(req, res);
-
-    } catch (err) {
-        console.error("Update Production Center Error:", err);
-        res.status(500).json({ error: err.message });
+    if (updates.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "No valid fields provided for update" });
     }
+
+    // 3. Execute Update
+    values.push(id); // Add ID for WHERE clause
+    await db.query(
+      `UPDATE productioncenter_productioncenter SET ${updates.join(", ")} WHERE id = ?`,
+      values,
+    );
+
+    // 4. Return Updated Data
+    // Reuse the GET function to return the formatted result
+    req.query.id = id;
+    return exports.getProductionCenters(req, res);
+  } catch (err) {
+    console.error("Update Production Center Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.deleteProductionCenter = async (req, res) => {
-    try {
-        const { id } = req.query;
-        if (!id) return res.status(400).json({ error: "id is required" });
+  try {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: "id is required" });
 
-        await db.query('DELETE FROM productioncenter_productioncenter WHERE id = ?', [id]);
-        
-        await clearProductionCenterCache(); // Clear Cache
-        
-        res.status(204).send();
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    await db.query(
+      "DELETE FROM productioncenter_productioncenter WHERE id = ?",
+      [id],
+    );
+
+    await clearProductionCenterCache(); // Clear Cache
+
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
-
 
 exports.getNearbyProductionCenters = async (req, res) => {
   try {
     const { farmer_id } = req.query;
-    console.log("former id",farmer_id);
-   
+    console.log("former id", farmer_id);
+
     if (!farmer_id) {
       return res.status(400).json({ error: "Farmer ID is required" });
     }
 
     const [farmers] = await db.query(
       `SELECT latitude, longitude FROM users_farmeraathardetails WHERE user_id = ?`,
-      [farmer_id]
+      [farmer_id],
     );
-     console.log(farmers);
-     
+    console.log(farmers);
+
     if (farmers.length === 0) {
       return res.status(404).json({ error: "Farmer not found" });
     }
@@ -633,11 +721,11 @@ exports.getNearbyProductionCenters = async (req, res) => {
 
     const productionCentersMap = {};
 
-    centers.forEach(row => {
+    centers.forEach((row) => {
       if (!productionCentersMap[row.id]) {
         productionCentersMap[row.id] = {
           ...row,
-          stock: []
+          stock: [],
         };
       }
 
@@ -646,7 +734,7 @@ exports.getNearbyProductionCenters = async (req, res) => {
           species_name: row.species_name,
           species_name_tamil: row.species_name_tamil,
           saplings_available: row.saplings_available,
-          sapling_age: row.sapling_age
+          sapling_age: row.sapling_age,
         });
       }
     });
@@ -658,13 +746,12 @@ exports.getNearbyProductionCenters = async (req, res) => {
       if (distA !== distB) return distA - distB;
       return a.id - b.id;
     });
-    console.log("result",result);
-    
+    console.log("result", result);
+
     return res.json({
       count: result.length,
-      results: result
+      results: result,
     });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -673,8 +760,12 @@ exports.getNearbyProductionCenters = async (req, res) => {
 
 exports.getDistrictSummary = async (req, res) => {
   try {
-    const [allSpecies] = await db.query(`SELECT id, name FROM tbl_agroforest_trees ORDER BY name ASC`);
-    const [districts] = await db.query(`SELECT id, District_Name FROM master_district ORDER BY District_Name ASC`);
+    const [allSpecies] = await db.query(
+      `SELECT id, name FROM tbl_agroforest_trees ORDER BY name ASC`,
+    );
+    const [districts] = await db.query(
+      `SELECT id, District_Name FROM master_district ORDER BY District_Name ASC`,
+    );
 
     // 1. Fetch Stock, Sold Qty, and Price
     const [stockData] = await db.query(`
@@ -710,39 +801,41 @@ exports.getDistrictSummary = async (req, res) => {
 
     // --- CREATE MAPS ---
     const stockMap = {};
-    stockData.forEach(item => {
+    stockData.forEach((item) => {
       const key = `${item.district_id}-${item.species_id}`;
       stockMap[key] = {
         qty: Number(item.total_quantity || 0),
         sold: Number(item.direct_sold_qty || 0),
-        sales: Number(item.direct_revenue_sum || 0)
+        sales: Number(item.direct_revenue_sum || 0),
       };
     });
 
     const targetMap = {};
-    targetData.forEach(item => {
+    targetData.forEach((item) => {
       // Map the target using the district_id from the NEW table
-      targetMap[String(item.district_id)] = Number(item.district_total_target || 0);
+      targetMap[String(item.district_id)] = Number(
+        item.district_total_target || 0,
+      );
     });
 
     const centerCountMap = {};
-    centerData.forEach(item => {
+    centerData.forEach((item) => {
       centerCountMap[String(item.district_id)] = Number(item.center_count || 0);
     });
 
     // --- TRANSFORM DATA ---
-    const districtSummaries = districts.map(dist => {
+    const districtSummaries = districts.map((dist) => {
       const saplingLookup = {};
       let totalStock = 0;
       let totalSold = 0;
       let totalSales = 0;
       let speciesCount = 0;
 
-      allSpecies.forEach(species => {
+      allSpecies.forEach((species) => {
         const key = `${dist.id}-${species.id}`;
         const data = stockMap[key] || { qty: 0, sold: 0, sales: 0 };
         saplingLookup[String(species.id)] = { qty: data.qty };
-        
+
         totalStock += data.qty;
         totalSold += data.sold;
         totalSales += data.sales;
@@ -755,19 +848,18 @@ exports.getDistrictSummary = async (req, res) => {
         district_name: dist.District_Name,
         production_center_count: centerCountMap[String(dist.id)] || 0,
         species_count: speciesCount,
-        total_target: targetMap[String(dist.id)] || 0, 
+        total_target: targetMap[String(dist.id)] || 0,
         total_stock_saplings: totalStock,
         total_selled: totalSold,
         total_selled_price: Math.round(totalSales),
-        saplingLookup: saplingLookup 
+        saplingLookup: saplingLookup,
       };
     });
 
     res.json({
       districts: districtSummaries,
-      allSpecies: allSpecies
+      allSpecies: allSpecies,
     });
-
   } catch (err) {
     console.error("❌ ERROR:", err);
     res.status(500).json({ error: err.message });
@@ -777,24 +869,31 @@ exports.getDistrictSummary = async (req, res) => {
 exports.getBlockSummary = async (req, res) => {
   try {
     const dist_id = req.params.id || req.query.dist_id;
-    if (!dist_id) return res.status(400).json({ error: "District ID is required" });
+    if (!dist_id)
+      return res.status(400).json({ error: "District ID is required" });
 
     // 1. Fetch ALL Species
-    const [allSpecies] = await db.query(`SELECT id, name FROM tbl_agroforest_trees ORDER BY name ASC`);
+    const [allSpecies] = await db.query(
+      `SELECT id, name FROM tbl_agroforest_trees ORDER BY name ASC`,
+    );
 
     // 2. Fetch Blocks for the District
-    const [blocks] = await db.query(`
+    const [blocks] = await db.query(
+      `
       SELECT id, Block_Name FROM master_block WHERE Dist_Name = ? ORDER BY Block_Name ASC
-    `, [dist_id]);
+    `,
+      [dist_id],
+    );
 
     if (blocks.length === 0) {
       return res.json({ blocks: [], allSpecies: allSpecies });
     }
 
-    const blockIds = blocks.map(b => b.id);
+    const blockIds = blocks.map((b) => b.id);
 
     // 3. Fetch Stock, Sold Qty, and Price
-    const [stockData] = await db.query(`
+    const [stockData] = await db.query(
+      `
       SELECT 
           pc.block_id, 
           s.species_id, 
@@ -805,60 +904,68 @@ exports.getBlockSummary = async (req, res) => {
       JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id
       WHERE pc.block_id IN (?) AND pc.status = 'approved'
       GROUP BY pc.block_id, s.species_id
-    `, [blockIds]);
+    `,
+      [blockIds],
+    );
 
     // 4. UPDATED: Fetch Target Data directly from target_block table
-    const [targetData] = await db.query(`
+    const [targetData] = await db.query(
+      `
       SELECT 
         block_id, 
         SUM(target_quantity) AS block_total_target
       FROM target_block
       WHERE block_id IN (?)
       GROUP BY block_id
-    `, [blockIds]);
+    `,
+      [blockIds],
+    );
 
     // 5. Fetch Center Counts
-    const [centerData] = await db.query(`
+    const [centerData] = await db.query(
+      `
       SELECT block_id, COUNT(id) as center_count
       FROM productioncenter_productioncenter
       WHERE block_id IN (?) AND status = 'approved'
       GROUP BY block_id
-    `, [blockIds]);
+    `,
+      [blockIds],
+    );
 
     // --- CREATE MAPS ---
     const stockMap = {};
-    stockData.forEach(item => {
+    stockData.forEach((item) => {
       stockMap[`${item.block_id}-${item.species_id}`] = {
         qty: Number(item.total_quantity || 0),
         sold: Number(item.direct_sold_qty || 0),
-        sales: Number(item.direct_sales_sum || 0)
+        sales: Number(item.direct_sales_sum || 0),
       };
     });
 
     const targetMap = {};
-    targetData.forEach(item => {
+    targetData.forEach((item) => {
       // Map targets using the block_id from target_block
       targetMap[String(item.block_id)] = Number(item.block_total_target || 0);
     });
 
     const centerCountMap = {};
-    centerData.forEach(item => {
+    centerData.forEach((item) => {
       centerCountMap[String(item.block_id)] = Number(item.center_count || 0);
     });
 
     // --- TRANSFORM DATA ---
-    const blockSummaries = blocks.map(block => {
+    const blockSummaries = blocks.map((block) => {
       const saplingLookup = {};
       let totalStock = 0;
       let totalSold = 0;
       let totalSalesVal = 0;
       let speciesCount = 0;
 
-      allSpecies.forEach(species => {
+      allSpecies.forEach((species) => {
         const key = `${block.id}-${species.id}`;
         const data = stockMap[key] || { qty: 0, sold: 0, sales: 0 };
         saplingLookup[String(species.id)] = { qty: data.qty };
-        
+
         totalStock += data.qty;
         totalSold += data.sold;
         totalSalesVal += data.sales;
@@ -866,21 +973,20 @@ exports.getBlockSummary = async (req, res) => {
       });
 
       return {
-        id: String(block.id), 
+        id: String(block.id),
         block_id: block.id,
         block_name: block.Block_Name,
         production_center_count: centerCountMap[String(block.id)] || 0,
         species_count: speciesCount,
-        total_target: targetMap[String(block.id)] || 0, 
+        total_target: targetMap[String(block.id)] || 0,
         total_stock_saplings: totalStock,
         total_selled: totalSold,
         total_selled_price: Math.round(totalSalesVal),
-        saplingLookup: saplingLookup 
+        saplingLookup: saplingLookup,
       };
     });
 
     res.json({ blocks: blockSummaries, allSpecies: allSpecies });
-    
   } catch (err) {
     console.error("❌ ERROR in getBlockSummary:", err);
     res.status(500).json({ error: err.message });
@@ -888,32 +994,33 @@ exports.getBlockSummary = async (req, res) => {
 };
 
 exports.getProductionCenterSummary = async (req, res) => {
-    try {
-        const { block_id } = req.query;
+  try {
+    const { block_id } = req.query;
 
-        // 1. Fetch Centers
-        let centerQuery = `
+    // 1. Fetch Centers
+    let centerQuery = `
             SELECT id, name_of_production_centre 
             FROM productioncenter_productioncenter 
             WHERE status = 'approved'
         `;
-        const queryParams = [];
-        if (block_id) {
-            centerQuery += " AND block_id = ?";
-            queryParams.push(block_id);
-        }
-        centerQuery += " ORDER BY name_of_production_centre ASC";
+    const queryParams = [];
+    if (block_id) {
+      centerQuery += " AND block_id = ?";
+      queryParams.push(block_id);
+    }
+    centerQuery += " ORDER BY name_of_production_centre ASC";
 
-        const [centers] = await db.query(centerQuery, queryParams);
+    const [centers] = await db.query(centerQuery, queryParams);
 
-        if (centers.length === 0) {
-            return res.json({ count: 0, centers: [], allSpecies: [] });
-        }
+    if (centers.length === 0) {
+      return res.json({ count: 0, centers: [], allSpecies: [] });
+    }
 
-        const centerIds = centers.map(c => c.id);
+    const centerIds = centers.map((c) => c.id);
 
-        // 2. Fetch Stock, Sold Qty, and Revenue directly from the table
-        const [stockData] = await db.query(`
+    // 2. Fetch Stock, Sold Qty, and Revenue directly from the table
+    const [stockData] = await db.query(
+      `
             SELECT 
                 s.production_center_id, 
                 s.species_id, 
@@ -923,90 +1030,96 @@ exports.getProductionCenterSummary = async (req, res) => {
             FROM productioncenter_stockdetails s
             WHERE s.production_center_id IN (?)
             GROUP BY s.production_center_id, s.species_id
-        `, [centerIds]);
+        `,
+      [centerIds],
+    );
 
-        // 3. Fetch Targets
-        const [targetData] = await db.query(`
+    // 3. Fetch Targets
+    const [targetData] = await db.query(
+      `
             SELECT productioncenter_id, SUM(target_quantity) AS total_target
             FROM target_productioncenter
             WHERE productioncenter_id IN (?)
             GROUP BY productioncenter_id
-        `, [centerIds]);
+        `,
+      [centerIds],
+    );
 
-        // 4. Fetch All Species
-        const [allSpecies] = await db.query(`
+    // 4. Fetch All Species
+    const [allSpecies] = await db.query(`
             SELECT id, name AS species_name 
             FROM tbl_agroforest_trees 
             ORDER BY name ASC
         `);
 
-        // 5. Create Lookup Maps
-        const stockMap = {};
-        stockData.forEach(item => {
-            const key = `${item.production_center_id}-${item.species_id}`;
-            stockMap[key] = {
-                qty: Number(item.total_quantity || 0),
-                sold: Number(item.direct_sold_qty || 0), // Added direct sold quantity
-                sales: Number(item.direct_revenue || 0)
-            };
-        });
+    // 5. Create Lookup Maps
+    const stockMap = {};
+    stockData.forEach((item) => {
+      const key = `${item.production_center_id}-${item.species_id}`;
+      stockMap[key] = {
+        qty: Number(item.total_quantity || 0),
+        sold: Number(item.direct_sold_qty || 0), // Added direct sold quantity
+        sales: Number(item.direct_revenue || 0),
+      };
+    });
 
-        const targetMap = {};
-        targetData.forEach(item => {
-            targetMap[String(item.productioncenter_id)] = Number(item.total_target || 0);
-        });
+    const targetMap = {};
+    targetData.forEach((item) => {
+      targetMap[String(item.productioncenter_id)] = Number(
+        item.total_target || 0,
+      );
+    });
 
-        // 6. Transform Data
-        const centerSummaries = centers.map(center => {
-            const saplingLookup = {};
-            let totalStock = 0;
-            let totalSold = 0; // New accumulator for sold quantity
-            let totalSalesVal = 0;
-            let speciesCount = 0;
+    // 6. Transform Data
+    const centerSummaries = centers.map((center) => {
+      const saplingLookup = {};
+      let totalStock = 0;
+      let totalSold = 0; // New accumulator for sold quantity
+      let totalSalesVal = 0;
+      let speciesCount = 0;
 
-            allSpecies.forEach(species => {
-                const key = `${center.id}-${species.id}`;
-                const data = stockMap[key] || { qty: 0, sold: 0, sales: 0 };
+      allSpecies.forEach((species) => {
+        const key = `${center.id}-${species.id}`;
+        const data = stockMap[key] || { qty: 0, sold: 0, sales: 0 };
 
-                saplingLookup[String(species.id)] = { qty: data.qty };
-                
-                totalStock += data.qty;
-                totalSold += data.sold; // Summing the sold quantity directly
-                totalSalesVal += data.sales; 
+        saplingLookup[String(species.id)] = { qty: data.qty };
 
-                if (data.qty > 0) {
-                    speciesCount++;
-                }
-            });
+        totalStock += data.qty;
+        totalSold += data.sold; // Summing the sold quantity directly
+        totalSalesVal += data.sales;
 
-            return {
-                id: String(center.id), 
-                center_id: center.id,
-                center_name: center.name_of_production_centre,
-                total_stock_saplings: totalStock,
-                total_selled: totalSold, // Now pulling directly from DB column
-                total_selled_price: Math.round(totalSalesVal), 
-                total_target: targetMap[String(center.id)] || 0,
-                species_count: speciesCount,
-                saplingLookup: saplingLookup 
-            };
-        });
+        if (data.qty > 0) {
+          speciesCount++;
+        }
+      });
 
-        res.json({
-            count: centerSummaries.length,
-            centers: centerSummaries,
-            allSpecies: allSpecies
-        });
+      return {
+        id: String(center.id),
+        center_id: center.id,
+        center_name: center.name_of_production_centre,
+        total_stock_saplings: totalStock,
+        total_selled: totalSold, // Now pulling directly from DB column
+        total_selled_price: Math.round(totalSalesVal),
+        total_target: targetMap[String(center.id)] || 0,
+        species_count: speciesCount,
+        saplingLookup: saplingLookup,
+      };
+    });
 
-    } catch (err) {
-        console.error("Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+    res.json({
+      count: centerSummaries.length,
+      centers: centerSummaries,
+      allSpecies: allSpecies,
+    });
+  } catch (err) {
+    console.error("Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.getDistrictSaplingSummary = async (req, res) => {
-    try {
-        const [saplings] = await db.query(`
+  try {
+    const [saplings] = await db.query(`
             SELECT 
                 t.name AS sapling_name,
                 (
@@ -1045,68 +1158,80 @@ exports.getDistrictSaplingSummary = async (req, res) => {
             ORDER BY t.name ASC
         `);
 
-        let districtMap = {};
-        let centerMap = {};
+    let districtMap = {};
+    let centerMap = {};
 
-        try {
-            const [districts] = await db.query(`SELECT id, District_Name FROM master_district`);
-            districts.forEach(d => {
-                const nameKey = Object.keys(d).find(key => key.toLowerCase() !== 'id');
-                if (nameKey) districtMap[String(d.id)] = d[nameKey];
-            });
-        } catch (err) {
-            console.error("District fetch failed:", err.message);
-        }
-
-        try {
-            const [centers] = await db.query(`SELECT id, name_of_production_centre FROM productioncenter_productioncenter`);
-            centers.forEach(c => {
-                const nameKey = Object.keys(c).find(key => key.toLowerCase() !== 'id');
-                if (nameKey) centerMap[String(c.id)] = c[nameKey];
-            });
-        } catch (err) {
-            console.error("Center fetch failed:", err.message);
-        }
-
-                const processedSaplings = saplings.map(item => {
-            // --- CHANGED: Map to array of objects so frontend gets both ID and Name ---
-            let districtData = [];
-            if (item.district_id) {
-                districtData = item.district_id.split(',').map(id => {
-                    const cleanId = id.trim();
-                    return { id: cleanId, name: districtMap[cleanId] || `ID:${cleanId}` };
-                });
-            }
-
-            let centerNames = null;
-            if (item.productioncenter_id) {
-                centerNames = item.productioncenter_id.split(',').map(id => centerMap[String(id.trim())] || `ID:${id.trim()}`).join(',');
-            }
-
-            return {
-                ...item,
-                district_names: districtData, // Now sends [{id: "2", name: "Chennai"}]
-                center_names: centerNames
-            };
-        });
-
-        res.json({
-            count: processedSaplings.length,
-            saplings: processedSaplings
-        });
-
+    try {
+      const [districts] = await db.query(
+        `SELECT id, District_Name FROM master_district`,
+      );
+      districts.forEach((d) => {
+        const nameKey = Object.keys(d).find(
+          (key) => key.toLowerCase() !== "id",
+        );
+        if (nameKey) districtMap[String(d.id)] = d[nameKey];
+      });
     } catch (err) {
-        console.error("Main Error:", err);
-        res.status(500).json({ error: err.message });
+      console.error("District fetch failed:", err.message);
     }
+
+    try {
+      const [centers] = await db.query(
+        `SELECT id, name_of_production_centre FROM productioncenter_productioncenter`,
+      );
+      centers.forEach((c) => {
+        const nameKey = Object.keys(c).find(
+          (key) => key.toLowerCase() !== "id",
+        );
+        if (nameKey) centerMap[String(c.id)] = c[nameKey];
+      });
+    } catch (err) {
+      console.error("Center fetch failed:", err.message);
+    }
+
+    const processedSaplings = saplings.map((item) => {
+      // --- CHANGED: Map to array of objects so frontend gets both ID and Name ---
+      let districtData = [];
+      if (item.district_id) {
+        districtData = item.district_id.split(",").map((id) => {
+          const cleanId = id.trim();
+          return { id: cleanId, name: districtMap[cleanId] || `ID:${cleanId}` };
+        });
+      }
+
+      let centerNames = null;
+      if (item.productioncenter_id) {
+        centerNames = item.productioncenter_id
+          .split(",")
+          .map((id) => centerMap[String(id.trim())] || `ID:${id.trim()}`)
+          .join(",");
+      }
+
+      return {
+        ...item,
+        district_names: districtData, // Now sends [{id: "2", name: "Chennai"}]
+        center_names: centerNames,
+      };
+    });
+
+    res.json({
+      count: processedSaplings.length,
+      saplings: processedSaplings,
+    });
+  } catch (err) {
+    console.error("Main Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.getBlockSaplingSummary = async (req, res) => {
-    try {
-        const { dist_id } = req.query;
-        if (!dist_id) return res.status(400).json({ error: "District ID is required" });
+  try {
+    const { dist_id } = req.query;
+    if (!dist_id)
+      return res.status(400).json({ error: "District ID is required" });
 
-        const [saplings] = await db.query(`
+    const [saplings] = await db.query(
+      `
             SELECT 
                 t.name AS sapling_name,
                 (
@@ -1141,89 +1266,103 @@ exports.getBlockSaplingSummary = async (req, res) => {
                 ), 0) AS total_sale_price
             FROM tbl_agroforest_trees t
             ORDER BY t.name ASC
-        `, [dist_id, dist_id, dist_id, dist_id, dist_id]);
+        `,
+      [dist_id, dist_id, dist_id, dist_id, dist_id],
+    );
 
-        // Fetch all blocks for this district for the dropdown list
-                // FOOLPROOF DROPDOWN FETCH: Joins with master_district using the ID from the URL
-               // FOOLPROOF DROPDOWN FETCH: Gets blocks by checking which ones have approved centers in this district
-        let blockQuery = `
+    // Fetch all blocks for this district for the dropdown list
+    // FOOLPROOF DROPDOWN FETCH: Joins with master_district using the ID from the URL
+    // FOOLPROOF DROPDOWN FETCH: Gets blocks by checking which ones have approved centers in this district
+    let blockQuery = `
             SELECT DISTINCT mb.id, mb.Block_Name 
             FROM productioncenter_productioncenter pc
             JOIN master_block mb ON pc.block_id = mb.id
             WHERE pc.district_id = ? AND pc.status = 'approved'
             ORDER BY mb.Block_Name ASC
         `;
-        const [blocks] = await db.query(blockQuery, [dist_id]);
-        blockQuery += " ORDER BY b.Block_Name ASC";
+    const [blocks] = await db.query(blockQuery, [dist_id]);
+    blockQuery += " ORDER BY b.Block_Name ASC";
 
-        let blockMap = {};
-        let centerMap = {};
+    let blockMap = {};
+    let centerMap = {};
 
-        // Bulletproof Block Name Fetch
-        try {
-            const [allBlocks] = await db.query(`SELECT id, Block_Name FROM master_block`);
-            allBlocks.forEach(b => {
-                const nameKey = Object.keys(b).find(key => key.toLowerCase() !== 'id');
-                if (nameKey) blockMap[String(b.id)] = b[nameKey];
-            });
-        } catch (err) {
-            console.error("Block fetch error:", err.message);
-        }
-
-        // Bulletproof Center Name Fetch
-        try {
-            const [centers] = await db.query(`SELECT id, name_of_production_centre FROM productioncenter_productioncenter`);
-            centers.forEach(c => {
-                const nameKey = Object.keys(c).find(key => key.toLowerCase() !== 'id');
-                if (nameKey) centerMap[String(c.id)] = c[nameKey];
-            });
-        } catch (err) {
-            console.error("Center fetch error:", err.message);
-        }
-
-        // Map IDs to Objects
-        const processedSaplings = saplings.map((item, index) => {
-            let blockData = [];
-            if (item.block_id) {
-                blockData = item.block_id.split(',').map(id => {
-                    const cleanId = id.trim();
-                    return { id: cleanId, name: blockMap[cleanId] || `ID:${cleanId}` };
-                });
-            }
-
-            let centerNames = null;
-            if (item.productioncenter_id) {
-                centerNames = item.productioncenter_id.split(',').map(id => centerMap[String(id.trim())] || `ID:${id.trim()}`).join(',');
-            }
-
-            return {
-                id: index + 1,
-                sno: index + 1,
-                ...item,
-                block_names: blockData, 
-                center_names: centerNames
-            };
-        });
-
-        res.json({
-            count: processedSaplings.length,
-            saplings: processedSaplings,
-            all_blocks: blocks // <--- THIS IS THE ONLY NEW LINE ADDED FOR THE DROPDOWN
-        });
-
+    // Bulletproof Block Name Fetch
+    try {
+      const [allBlocks] = await db.query(
+        `SELECT id, Block_Name FROM master_block`,
+      );
+      allBlocks.forEach((b) => {
+        const nameKey = Object.keys(b).find(
+          (key) => key.toLowerCase() !== "id",
+        );
+        if (nameKey) blockMap[String(b.id)] = b[nameKey];
+      });
     } catch (err) {
-        console.error("Block Sapling Summary Error:", err);
-        res.status(500).json({ error: err.message });
+      console.error("Block fetch error:", err.message);
     }
+
+    // Bulletproof Center Name Fetch
+    try {
+      const [centers] = await db.query(
+        `SELECT id, name_of_production_centre FROM productioncenter_productioncenter`,
+      );
+      centers.forEach((c) => {
+        const nameKey = Object.keys(c).find(
+          (key) => key.toLowerCase() !== "id",
+        );
+        if (nameKey) centerMap[String(c.id)] = c[nameKey];
+      });
+    } catch (err) {
+      console.error("Center fetch error:", err.message);
+    }
+
+    // Map IDs to Objects
+    const processedSaplings = saplings.map((item, index) => {
+      let blockData = [];
+      if (item.block_id) {
+        blockData = item.block_id.split(",").map((id) => {
+          const cleanId = id.trim();
+          return { id: cleanId, name: blockMap[cleanId] || `ID:${cleanId}` };
+        });
+      }
+
+      let centerNames = null;
+      if (item.productioncenter_id) {
+        centerNames = item.productioncenter_id
+          .split(",")
+          .map((id) => centerMap[String(id.trim())] || `ID:${id.trim()}`)
+          .join(",");
+      }
+
+      return {
+        id: index + 1,
+        sno: index + 1,
+        ...item,
+        block_names: blockData,
+        center_names: centerNames,
+      };
+    });
+
+    res.json({
+      count: processedSaplings.length,
+      saplings: processedSaplings,
+      all_blocks: blocks, // <--- THIS IS THE ONLY NEW LINE ADDED FOR THE DROPDOWN
+    });
+  } catch (err) {
+    console.error("Block Sapling Summary Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.getProductionCenterSaplingSummary = async (req, res) => {
-    try {
-        const { block_id } = req.query;
-        if (!block_id) return res.status(400).json({ error: "Block ID is required" });
+  try {
+    const { block_id } = req.query;
+    if (!block_id)
+      return res.status(400).json({ error: "Block ID is required" });
 
-        // Passing block_id 4 times for the 4 subqueries
-        const [saplings] = await db.query(`
+    // Passing block_id 4 times for the 4 subqueries
+    const [saplings] = await db.query(
+      `
             SELECT 
                 t.name AS sapling_name,
                 (
@@ -1252,46 +1391,51 @@ exports.getProductionCenterSaplingSummary = async (req, res) => {
                 ), 0) AS total_sale_price
             FROM tbl_agroforest_trees t
             ORDER BY t.name ASC
-        `, [block_id, block_id, block_id, block_id]);
+        `,
+      [block_id, block_id, block_id, block_id],
+    );
 
-        let centerMap = {};
+    let centerMap = {};
 
-        // Bulletproof Center Name Fetch
-        try {
-            const [centers] = await db.query(`SELECT id, name_of_production_centre FROM productioncenter_productioncenter`);
-            centers.forEach(c => {
-                const nameKey = Object.keys(c).find(key => key.toLowerCase() !== 'id');
-                if (nameKey) centerMap[String(c.id)] = c[nameKey];
-            });
-        } catch (err) {
-            console.error("Center fetch error:", err.message);
-        }
-
-        // Map IDs to Objects
-        const processedSaplings = saplings.map((item, index) => {
-            let centerData = [];
-            if (item.productioncenter_id) {
-                centerData = item.productioncenter_id.split(',').map(id => {
-                    const cleanId = id.trim();
-                    return { id: cleanId, name: centerMap[cleanId] || `ID:${cleanId}` };
-                });
-            }
-
-            return {
-                id: index + 1,
-                sno: index + 1,
-                ...item,
-                center_names: centerData // Array of objects for frontend
-            };
-        });
-
-        res.json({
-            count: processedSaplings.length,
-            saplings: processedSaplings
-        });
-
+    // Bulletproof Center Name Fetch
+    try {
+      const [centers] = await db.query(
+        `SELECT id, name_of_production_centre FROM productioncenter_productioncenter`,
+      );
+      centers.forEach((c) => {
+        const nameKey = Object.keys(c).find(
+          (key) => key.toLowerCase() !== "id",
+        );
+        if (nameKey) centerMap[String(c.id)] = c[nameKey];
+      });
     } catch (err) {
-        console.error("Production Center Sapling Summary Error:", err);
-        res.status(500).json({ error: err.message });
+      console.error("Center fetch error:", err.message);
     }
+
+    // Map IDs to Objects
+    const processedSaplings = saplings.map((item, index) => {
+      let centerData = [];
+      if (item.productioncenter_id) {
+        centerData = item.productioncenter_id.split(",").map((id) => {
+          const cleanId = id.trim();
+          return { id: cleanId, name: centerMap[cleanId] || `ID:${cleanId}` };
+        });
+      }
+
+      return {
+        id: index + 1,
+        sno: index + 1,
+        ...item,
+        center_names: centerData, // Array of objects for frontend
+      };
+    });
+
+    res.json({
+      count: processedSaplings.length,
+      saplings: processedSaplings,
+    });
+  } catch (err) {
+    console.error("Production Center Sapling Summary Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };

@@ -1,6 +1,6 @@
 const db = require("../../db");
 require("dotenv").config();
-
+const redisClient = require("../../redisClient")
 // Helper to attach BASE_URL when sending response
 const withBaseUrl = (path) => {
   if (!path) return null;
@@ -14,12 +14,12 @@ exports.uploadDashboardCarousel = async (req, res) => {
       return res.status(400).json({ error: "No files uploaded" });
     }
 
-    // ✅ store only relative path
+    //  store only relative path
     const values = req.files.map(file => [`/uploads/${file.filename}`]);
 
     const sql = "INSERT INTO dashboardcarouselimages (imageurl) VALUES ?";
     await db.query(sql, [values]);
-
+    await redisClient.del("dashBoardCarousel")
     res.status(201).json({
       message: "Images uploaded successfully",
       count: req.files.length
@@ -34,15 +34,19 @@ exports.uploadDashboardCarousel = async (req, res) => {
 // --- 2. Get Dashboard Carousel ---
 exports.getDashboardCarousel = async (req, res) => {
   try {
+    const cachedData = await redisClient.get("dashBoardCarousel");
+    if (cachedData) {
+      return res.json(JSON.parse(cachedData))
+    }
     const sql = "SELECT * FROM dashboardcarouselimages ORDER BY id DESC";
     const [result] = await db.query(sql);
-
+  
     // ✅ attach BASE_URL here
     const updated = result.map(item => ({
       ...item,
       imageurl: withBaseUrl(item.imageurl)
     }));
-
+     await redisClient.set("dashBoardCarousel",JSON.stringify(updated),{EX:60})
     res.status(200).json(updated);
 
   } catch (error) {
@@ -64,7 +68,7 @@ exports.deleteDashboardCarousel = async (req, res) => {
     const sql = `DELETE FROM dashboardcarouselimages WHERE id IN (${placeholders})`;
 
     await db.query(sql, ids);
-
+    await redisClient.del("dashBoardCarousel")
     res.json({
       message: "Deleted successfully",
       affectedRows: ids.length
@@ -124,7 +128,7 @@ exports.uploadDashboardScheme = async (req, res) => {
       JSON.stringify(schemeDocumentsEn),
       JSON.stringify(schemeDocumentsTa)
     ]);
-
+    await redisClient.del("dashboardScheme")
     res.status(201).json({ message: "Scheme uploaded successfully" });
 
   } catch (error) {
@@ -187,7 +191,7 @@ exports.updateDashboardScheme = async (req, res) => {
       JSON.stringify(schemeDocumentsTa),
       id
     ]);
-
+    await redisClient.del("dashboardScheme")
     res.status(200).json({ message: "Scheme updated successfully" });
 
   } catch (error) {
@@ -196,7 +200,7 @@ exports.updateDashboardScheme = async (req, res) => {
   }
 };
 // --- 5. Get Dashboard Schemes ---
-// ✅ Helper function to safely handle JSON (fixes the parse error)
+//  Helper function to safely handle JSON (fixes the parse error)
 const parseSafe = (val) => {
   if (!val) return [];
   // If mysql2 already parsed the JSON column, return it directly
@@ -208,6 +212,10 @@ const parseSafe = (val) => {
 
 exports.getDashboardSchemes = async (req, res) => {
   try {
+    const cachedData = await redisClient.get("dashboardScheme");
+    if (cachedData) {
+      return res.json(JSON.parse(cachedData))
+    }
     const sql = `
       SELECT id, image_url, about_scheme_en, about_scheme_ta, 
              preferred_species_en, preferred_species_ta,
@@ -223,7 +231,7 @@ exports.getDashboardSchemes = async (req, res) => {
       ...row,
       image_url: withBaseUrl(row.image_url),
       
-      // ✅ Use parseSafe instead of JSON.parse
+      //  Use parseSafe instead of JSON.parse
       preferred_species_en: parseSafe(row.preferred_species_en),
       preferred_species_ta: parseSafe(row.preferred_species_ta),
       scheme_eligibility_en: parseSafe(row.scheme_eligibility_en),
@@ -231,7 +239,7 @@ exports.getDashboardSchemes = async (req, res) => {
       scheme_documents_en: parseSafe(row.scheme_documents_en),
       scheme_documents_ta: parseSafe(row.scheme_documents_ta)
     }));
-
+   await redisClient.set("dashboardScheme",JSON.stringify(parsedResults),{EX: 60})
     res.json(parsedResults);
 
   } catch (error) {
@@ -250,7 +258,7 @@ exports.deleteDashboardScheme = async (req, res) => {
 
     const sql = "DELETE FROM dashboard_schemes WHERE id = ?";
     await db.query(sql, [id]);
-
+    await redisClient.del("dashboardScheme")
     res.json({ message: "Scheme deleted successfully" });
 
   } catch (error) {
