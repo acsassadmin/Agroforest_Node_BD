@@ -4,8 +4,8 @@ const mysql = require('mysql2');
 // Replace with your existing database credentials
 const pool = mysql.createPool({
   host: 'localhost',       
-  user: 'root',
-  password: '',
+  user: 'myuser',
+  password: '123',
   database: 'agroforest',
   waitForConnections: true,
     port: 3306, 

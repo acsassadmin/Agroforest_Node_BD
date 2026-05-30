@@ -110,4 +110,7 @@ router.post(
   userController.createProductionCenter,
 );
 router.get("/generate-bill-pdf/", userController.generateBillPdf);
+
+router.post('/register-production-center/', userController.createProductionCenter);
+router.get('/generate-bill-pdf/', userController.generateBillPdf);
 module.exports = router;
