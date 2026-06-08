@@ -1,17 +1,17 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const https = require('https');
+//const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const app = express();
 const PORT = 3001;
 
 // ✅ SSL CERT PATHS (IMPORTANT: keep double backslashes OR use /)
-const sslOptions = {
-  key: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.key"),
-  cert: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.crt"),
-};
+//const sslOptions = {
+  //key: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.key"),
+  //cert: fs.readFileSync("C:\\Users\\ACSASS-SERVER\\Documents\\Tnagroforestry\\Agroforest_Node_BD\\test.acsass.com.crt"),
+//};
 
 
 // const sslOptions = {
@@ -58,6 +58,9 @@ app.use("/dynamic",dynamicControl)
 app.use("/payment", paymentRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ✅ START HTTPS SERVER (instead of app.listen)
-https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 HTTPS running at https://192.168.1.203:${PORT}`);
+//https.createServer(sslOptions, app).listen(PORT, '0.0.0.0', () => {
+  //console.log(`🚀 HTTPS running at https://192.168.1.203:${PORT}`);
+//});
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
