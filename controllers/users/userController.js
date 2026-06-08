@@ -70,9 +70,9 @@ exports.sendLoginOtp = async (req, res) => {
     // VALIDATION
     // ======================================================
 
-    if (!phone || !username) {
+    if (!phone) {
       return res.status(400).json({
-        message: "Phone or username is required",
+        message: "Phone or is required",
       });
     }
 
