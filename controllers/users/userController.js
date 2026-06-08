@@ -55,28 +55,24 @@ const formatIndianPhone = (phone) => {
 };
 
 // SEND LOGIN OTP
-// ==========================
-// SEND LOGIN OTP
-// ==========================
 exports.sendLoginOtp = async (req, res) => {
   try {
     const { phone, username, expected_role_group } = req.body;
-
-    // ======================================================
-    // VALIDATION
-    // ======================================================
-
-    if (!phone) {
-      return res.status(400).json({
-        message: "Phone is required",
-      });
-    }
-
     const formattedPhone = formatIndianPhone(phone);
 
     if (!formattedPhone) {
       return res.status(400).json({
         message: "Invalid phone number",
+      });
+    }
+    await redisClient.del(`login_${formattedPhone}`);
+    // ======================================================
+    // VALIDATION
+    // ======================================================
+
+    if (!phone || !username) {
+      return res.status(400).json({
+        message: "Phone or username is required",
       });
     }
 
@@ -151,10 +147,6 @@ exports.sendLoginOtp = async (req, res) => {
     // ======================================================
 
     if (expected_role_group === "production_center") {
-      // ======================================================
-      // CASE 1: USERNAME PROVIDED
-      // ======================================================
-
       if (username && username.trim() !== "") {
         const [rows] = await db.query(
           `
@@ -199,18 +191,7 @@ exports.sendLoginOtp = async (req, res) => {
         );
 
         productionRows = rows;
-
-        if (productionRows.length === 0) {
-          return res.status(404).json({
-            message: "Invalid mobile number or username",
-          });
-        }
-      }
-
-      // ======================================================
-      // CASE 2: PHONE ONLY
-      // ======================================================
-      else {
+      } else {
         const [rows] = await db.query(
           `
           SELECT 
@@ -244,12 +225,6 @@ exports.sendLoginOtp = async (req, res) => {
         );
 
         productionRows = rows;
-
-        if (productionRows.length === 0) {
-          return res.status(404).json({
-            message: "Production center user not found",
-          });
-        }
       }
     }
 
@@ -284,7 +259,20 @@ exports.sendLoginOtp = async (req, res) => {
       productionRows = rows;
     }
 
-    const finalData = productionRows[0];
+    // const finalData = productionRows[0];
+    const finalData =
+      productionRows.length > 0
+        ? productionRows[0]
+        : {
+            production_center_id: null,
+            production_center_status: null,
+            production_type: null,
+            name_of_production_centre: null,
+            department_id: user.department_id,
+            district_id: user.district_id,
+            block_id: user.block_id,
+            village_id: user.village_id,
+          };
 
     // ======================================================
     // OTP
