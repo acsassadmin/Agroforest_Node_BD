@@ -757,18 +757,142 @@ exports.getNearbyProductionCenters = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+// get nearby centers
+// exports.getDistrictSummary = async (req, res) => {
+//   try {
+//     const [allSpecies] = await db.query(
+//       `SELECT id, name FROM tbl_agroforest_trees ORDER BY name ASC`,
+//     );
+//     const [districts] = await db.query(
+//       `SELECT id, District_Name FROM master_district ORDER BY District_Name ASC`,
+//     );
 
+//     // 1. Fetch Stock, Sold Qty, and Price
+//     const [stockData] = await db.query(`
+//       SELECT
+//           pc.district_id,
+//           s.species_id,
+//           SUM(s.saplings_available) AS total_quantity,
+//           SUM(s.total_selled) AS direct_sold_qty,
+//           SUM(s.total_selled_price) AS direct_revenue_sum
+//       FROM productioncenter_stockdetails s
+//       JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id
+//       WHERE pc.status = 'approved'
+//       GROUP BY pc.district_id, s.species_id
+//     `);
+
+//     // 2. UPDATED: Fetch Target Data from target_district table
+//     // We remove the JOIN because target_district should already have district_id
+//     const [targetData] = await db.query(`
+//       SELECT
+//         district_id,
+//         SUM(target_quantity) AS district_total_target
+//       FROM target_district
+//       GROUP BY district_id
+//     `);
+
+//     // 3. Fetch Center Counts
+//     const [centerData] = await db.query(`
+//       SELECT district_id, COUNT(id) as center_count
+//       FROM productioncenter_productioncenter
+//       WHERE status = 'approved'
+//       GROUP BY district_id
+//     `);
+
+//     // --- CREATE MAPS ---
+//     const stockMap = {};
+//     stockData.forEach((item) => {
+//       const key = `${item.district_id}-${item.species_id}`;
+//       stockMap[key] = {
+//         qty: Number(item.total_quantity || 0),
+//         sold: Number(item.direct_sold_qty || 0),
+//         sales: Number(item.direct_revenue_sum || 0),
+//       };
+//     });
+
+//     const targetMap = {};
+//     targetData.forEach((item) => {
+//       // Map the target using the district_id from the NEW table
+//       targetMap[String(item.district_id)] = Number(
+//         item.district_total_target || 0,
+//       );
+//     });
+
+//     const centerCountMap = {};
+//     centerData.forEach((item) => {
+//       centerCountMap[String(item.district_id)] = Number(item.center_count || 0);
+//     });
+
+//     // --- TRANSFORM DATA ---
+//     const districtSummaries = districts.map((dist) => {
+//       const saplingLookup = {};
+//       let totalStock = 0;
+//       let totalSold = 0;
+//       let totalSales = 0;
+//       let speciesCount = 0;
+
+//       allSpecies.forEach((species) => {
+//         const key = `${dist.id}-${species.id}`;
+//         const data = stockMap[key] || { qty: 0, sold: 0, sales: 0 };
+//         saplingLookup[String(species.id)] = { qty: data.qty };
+
+//         totalStock += data.qty;
+//         totalSold += data.sold;
+//         totalSales += data.sales;
+//         if (data.qty > 0) speciesCount++;
+//       });
+
+//       return {
+//         id: String(dist.id),
+//         district_id: dist.id,
+//         district_name: dist.District_Name,
+//         production_center_count: centerCountMap[String(dist.id)] || 0,
+//         species_count: speciesCount,
+//         total_target: targetMap[String(dist.id)] || 0,
+//         total_stock_saplings: totalStock,
+//         total_selled: totalSold,
+//         total_selled_price: Math.round(totalSales),
+//         saplingLookup: saplingLookup,
+//       };
+//     });
+
+//     res.json({
+//       districts: districtSummaries,
+//       allSpecies: allSpecies,
+//     });
+//   } catch (err) {
+//     console.error("❌ ERROR:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
 exports.getDistrictSummary = async (req, res) => {
   try {
+    const { department_id } = req.query;
+
     const [allSpecies] = await db.query(
       `SELECT id, name FROM tbl_agroforest_trees ORDER BY name ASC`,
     );
-    const [districts] = await db.query(
-      `SELECT id, District_Name FROM master_district ORDER BY District_Name ASC`,
-    );
+
+    // ✅ FIXED: Use JOIN to find districts that have production centers in the specific department
+    let districtQuery = `
+      SELECT DISTINCT d.id, d.District_Name 
+      FROM master_district d
+    `;
+    const queryParams = [];
+
+    if (department_id) {
+      districtQuery += `
+        JOIN productioncenter_productioncenter pc ON d.id = pc.district_id 
+        WHERE pc.department_id = ? AND pc.status = 'approved'
+      `;
+      queryParams.push(department_id);
+    }
+
+    districtQuery += ` ORDER BY d.District_Name ASC`;
+    const [districts] = await db.query(districtQuery, queryParams);
 
     // 1. Fetch Stock, Sold Qty, and Price
-    const [stockData] = await db.query(`
+    let stockQuery = `
       SELECT 
           pc.district_id, 
           s.species_id, 
@@ -778,11 +902,16 @@ exports.getDistrictSummary = async (req, res) => {
       FROM productioncenter_stockdetails s
       JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id
       WHERE pc.status = 'approved'
-      GROUP BY pc.district_id, s.species_id
-    `);
+    `;
+    const stockParams = [];
+    if (department_id) {
+      stockQuery += ` AND pc.department_id = ?`;
+      stockParams.push(department_id);
+    }
+    stockQuery += ` GROUP BY pc.district_id, s.species_id`;
+    const [stockData] = await db.query(stockQuery, stockParams);
 
-    // 2. UPDATED: Fetch Target Data from target_district table
-    // We remove the JOIN because target_district should already have district_id
+    // 2. Fetch Target Data from target_district table
     const [targetData] = await db.query(`
       SELECT 
         district_id, 
@@ -792,12 +921,18 @@ exports.getDistrictSummary = async (req, res) => {
     `);
 
     // 3. Fetch Center Counts
-    const [centerData] = await db.query(`
+    let centerQuery = `
       SELECT district_id, COUNT(id) as center_count
       FROM productioncenter_productioncenter
       WHERE status = 'approved'
-      GROUP BY district_id
-    `);
+    `;
+    const centerParams = [];
+    if (department_id) {
+      centerQuery += ` AND department_id = ?`;
+      centerParams.push(department_id);
+    }
+    centerQuery += ` GROUP BY district_id`;
+    const [centerData] = await db.query(centerQuery, centerParams);
 
     // --- CREATE MAPS ---
     const stockMap = {};
@@ -812,7 +947,6 @@ exports.getDistrictSummary = async (req, res) => {
 
     const targetMap = {};
     targetData.forEach((item) => {
-      // Map the target using the district_id from the NEW table
       targetMap[String(item.district_id)] = Number(
         item.district_total_target || 0,
       );
@@ -865,7 +999,6 @@ exports.getDistrictSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.getBlockSummary = async (req, res) => {
   try {
     const dist_id = req.params.id || req.query.dist_id;
@@ -992,7 +1125,6 @@ exports.getBlockSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.getProductionCenterSummary = async (req, res) => {
   try {
     const { block_id } = req.query;
@@ -1116,7 +1248,6 @@ exports.getProductionCenterSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.getDistrictSaplingSummary = async (req, res) => {
   try {
     const [saplings] = await db.query(`
@@ -1223,7 +1354,6 @@ exports.getDistrictSaplingSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.getBlockSaplingSummary = async (req, res) => {
   try {
     const { dist_id } = req.query;
@@ -1353,7 +1483,6 @@ exports.getBlockSaplingSummary = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.getProductionCenterSaplingSummary = async (req, res) => {
   try {
     const { block_id } = req.query;
@@ -1436,6 +1565,126 @@ exports.getProductionCenterSaplingSummary = async (req, res) => {
     });
   } catch (err) {
     console.error("Production Center Sapling Summary Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+exports.getDepartmentSummary = async (req, res) => {
+  try {
+    // 1. Fetch All Departments
+    const [departments] = await db.query(
+      `SELECT id, name FROM department ORDER BY name ASC`,
+    );
+
+    // 2. Fetch All Species
+    const [allSpecies] = await db.query(
+      `SELECT id, name FROM tbl_agroforest_trees ORDER BY name ASC`,
+    );
+
+    // 3. Fetch Stock, Sold Qty, and Price grouped by Department
+    const [stockData] = await db.query(`
+      SELECT 
+          pc.department_id, 
+          s.species_id, 
+          SUM(s.saplings_available) AS total_quantity,
+          SUM(s.total_selled) AS direct_sold_qty,
+          SUM(s.total_selled_price) AS direct_revenue_sum
+      FROM productioncenter_stockdetails s
+      JOIN productioncenter_productioncenter pc ON s.production_center_id = pc.id
+      WHERE pc.status = 'approved' AND pc.department_id IS NOT NULL
+      GROUP BY pc.department_id, s.species_id
+    `);
+
+    // 4. Fetch Target Data (Assuming you have a target_department table,
+    // if not, you can remove this part or create the table)
+    const [targetData] = await db.query(`
+      SELECT 
+        department_id, 
+        SUM(target_quantity) AS dept_total_target
+      FROM target_department
+      GROUP BY department_id
+    `);
+
+    // 5. Fetch Center Counts & District Counts per Department
+    const [centerData] = await db.query(`
+      SELECT department_id, 
+             COUNT(id) as center_count,
+             COUNT(DISTINCT district_id) as district_count
+      FROM productioncenter_productioncenter
+      WHERE status = 'approved' AND department_id IS NOT NULL
+      GROUP BY department_id
+    `);
+
+    // --- CREATE MAPS ---
+    const stockMap = {};
+    stockData.forEach((item) => {
+      const key = `${item.department_id}-${item.species_id}`;
+      stockMap[key] = {
+        qty: Number(item.total_quantity || 0),
+        sold: Number(item.direct_sold_qty || 0),
+        sales: Number(item.direct_revenue_sum || 0),
+      };
+    });
+
+    const targetMap = {};
+    targetData.forEach((item) => {
+      targetMap[String(item.department_id)] = Number(
+        item.dept_total_target || 0,
+      );
+    });
+
+    const centerCountMap = {};
+    centerData.forEach((item) => {
+      centerCountMap[String(item.department_id)] = {
+        centers: Number(item.center_count || 0),
+        districts: Number(item.district_count || 0),
+      };
+    });
+
+    // --- TRANSFORM DATA ---
+    const departmentSummaries = departments.map((dept) => {
+      const saplingLookup = {};
+      let totalStock = 0;
+      let totalSold = 0;
+      let totalSales = 0;
+      let speciesCount = 0;
+
+      allSpecies.forEach((species) => {
+        const key = `${dept.id}-${species.id}`;
+        const data = stockMap[key] || { qty: 0, sold: 0, sales: 0 };
+        saplingLookup[String(species.id)] = { qty: data.qty };
+
+        totalStock += data.qty;
+        totalSold += data.sold;
+        totalSales += data.sales;
+        if (data.qty > 0) speciesCount++;
+      });
+
+      const counts = centerCountMap[String(dept.id)] || {
+        centers: 0,
+        districts: 0,
+      };
+
+      return {
+        id: String(dept.id),
+        department_id: dept.id,
+        department_name: dept.name,
+        district_count: counts.districts,
+        production_center_count: counts.centers,
+        species_count: speciesCount,
+        total_target: targetMap[String(dept.id)] || 0,
+        total_stock_saplings: totalStock,
+        total_selled: totalSold,
+        total_selled_price: Math.round(totalSales),
+        saplingLookup: saplingLookup,
+      };
+    });
+
+    res.json({
+      departments: departmentSummaries,
+      allSpecies: allSpecies,
+    });
+  } catch (err) {
+    console.error("❌ ERROR in getDepartmentSummary:", err);
     res.status(500).json({ error: err.message });
   }
 };

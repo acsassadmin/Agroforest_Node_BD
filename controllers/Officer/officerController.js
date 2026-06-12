@@ -2,21 +2,21 @@ const db = require("../../db");
 const bcrypt = require("bcrypt");
 // ===================== OFFICER =====================
 
-const redisClient = require('../../redisClient');
+const redisClient = require("../../redisClient");
 
 // Helper function to format JS Date to MySQL DATETIME
 // Helper function to format date for MySQL (assuming this wasn't imported, defining it here to be safe)
 const toMySQLDatetime = (date) => {
-    return date.toISOString().slice(0, 19).replace('T', ' ');
+  return date.toISOString().slice(0, 19).replace("T", " ");
 };
 // --- GET OFFICER BY ID (For Edit) ---
 exports.getOfficerById = async (req, res) => {
-    try {
-        const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-        // SQL Query remains unchanged as requested
-        // It returns raw data: Mobile (Number), Gender (Number)
-        const query = `
+    // SQL Query remains unchanged as requested
+    // It returns raw data: Mobile (Number), Gender (Number)
+    const query = `
             SELECT 
                 od.id,
                 od.\`officer name\` AS officerName,
@@ -42,37 +42,37 @@ exports.getOfficerById = async (req, res) => {
             WHERE od.id = ?
         `;
 
-        const [rows] = await db.query(query, [id]);
+    const [rows] = await db.query(query, [id]);
 
-        if (!rows.length) {
-            return res.status(404).json({ message: "Officer not found" });
-        }
-
-        // We return the raw data. The Frontend will handle the Number -> String conversion.
-        res.json(rows[0]);
-    } catch (err) {
-        console.error("Get Officer By ID Error:", err);
-        res.status(500).json({ error: err.message });
+    if (!rows.length) {
+      return res.status(404).json({ message: "Officer not found" });
     }
+
+    // We return the raw data. The Frontend will handle the Number -> String conversion.
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Get Officer By ID Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 // --- GET ALL OFFICERS (List) ---
 exports.getOfficers = async (req, res) => {
-    try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        const offset = (page - 1) * limit;
-        const roleIdFilter = req.query.role_id; 
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const roleIdFilter = req.query.role_id;
 
-        let whereClause = '';
-        const queryParams = [];
+    let whereClause = "";
+    const queryParams = [];
 
-        if (roleIdFilter) {
-            whereClause = 'WHERE od.role = ?';
-            queryParams.push(roleIdFilter);
-        }
+    if (roleIdFilter) {
+      whereClause = "WHERE od.role = ?";
+      queryParams.push(roleIdFilter);
+    }
 
-        // Query remains unchanged
-        const dataQuery = `
+    // Query remains unchanged
+    const dataQuery = `
             SELECT 
                 od.id,
                 od.\`officer name\` AS officerName,
@@ -101,149 +101,173 @@ exports.getOfficers = async (req, res) => {
             LIMIT ? OFFSET ?;
         `;
 
-        const countQuery = `
+    const countQuery = `
             SELECT COUNT(*) as total 
             FROM officer_details od
             ${whereClause}
         `;
 
-        const dataParams = [...queryParams, limit, offset];
-        const countParams = [...queryParams];
+    const dataParams = [...queryParams, limit, offset];
+    const countParams = [...queryParams];
 
-        const [officersResult, countResult] = await Promise.all([
-            db.query(dataQuery, dataParams),
-            db.query(countQuery, countParams)
-        ]);
+    const [officersResult, countResult] = await Promise.all([
+      db.query(dataQuery, dataParams),
+      db.query(countQuery, countParams),
+    ]);
 
-        const officers = officersResult[0];
-        const totalItems = countResult[0][0].total;
-        const totalPages = Math.ceil(totalItems / limit);
-        console.log(officers);
-        
-        // We format Gender/Mobile here only for the LIST view.
-        // For the EDIT view, getOfficerById sends raw data.
-        const formattedOfficers = officers.map(officer => ({
-            ...officer,
-            gender: officer.Gender == 1 ? 'Male' : (officer.Gender == 2 ? 'Female' : 'Other'),
-            mobile: String(officer.mobile || '')
-        }));
-        
-        res.json({
-            data: formattedOfficers,
-            pagination: {
-                totalItems: totalItems,
-                totalPages: totalPages,
-                currentPage: page,
-                itemsPerPage: limit
-            }
-        });
+    const officers = officersResult[0];
+    const totalItems = countResult[0][0].total;
+    const totalPages = Math.ceil(totalItems / limit);
+    console.log(officers);
 
-    } catch (err) {
-        console.error("Get Officers Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+    // We format Gender/Mobile here only for the LIST view.
+    // For the EDIT view, getOfficerById sends raw data.
+    const formattedOfficers = officers.map((officer) => ({
+      ...officer,
+      gender:
+        officer.Gender == 1 ? "Male" : officer.Gender == 2 ? "Female" : "Other",
+      mobile: String(officer.mobile || ""),
+    }));
+
+    res.json({
+      data: formattedOfficers,
+      pagination: {
+        totalItems: totalItems,
+        totalPages: totalPages,
+        currentPage: page,
+        itemsPerPage: limit,
+      },
+    });
+  } catch (err) {
+    console.error("Get Officers Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 // --- REGISTER OFFICER ---
 exports.registerOfficer = async (req, res) => {
-    const connection = await db.getConnection(); 
-    try {
-        await connection.beginTransaction();
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        const {
-            officername,
-            gender,
-            mobile,
-            email,
-            department,
-            designation,
-            role,
-            district_id,
-            block_id,
-            created_by,
-            created_at
-        } = req.body;
+    const {
+      officername,
+      gender,
+      mobile,
+      email,
+      department,
+      designation,
+      role,
+      district_id,
+      block_id,
+      created_by,
+      created_at,
+    } = req.body;
 
-        // Only mobile is required for duplicate check
-        if (!mobile) {
-            await connection.rollback();
-            return res.status(400).json({ 
-                success: false,
-                message: "Mobile number is required" 
-            });
-        }
-        
-        // Check ONLY by mobile number (not email)
-        const [existingUser] = await connection.query(
-            'SELECT id, phone, email FROM users_customuser WHERE phone = ?',
-            [mobile]
-        );
-        
-        if (existingUser.length > 0) {
-            await connection.rollback();
-            return res.status(409).json({ 
-                success: false,
-                message: "Mobile number already registered. Please use a different number." 
-            });
-        }
+    // Only mobile is required for duplicate check
+    if (!mobile) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Mobile number is required",
+      });
+    }
 
-        let roleId = null;
-        if (role) {
-            const [roleRows] = await connection.query(
-                'SELECT id FROM users_role WHERE id = ? OR name = ?',
-                [role, role]
-            );
-            if (roleRows.length > 0) roleId = roleRows[0].id;
-        }
+    // Check ONLY by mobile number (not email)
+    const [existingUser] = await connection.query(
+      "SELECT id, phone, email FROM users_customuser WHERE phone = ?",
+      [mobile],
+    );
 
-        // Gender: 1 for Male, 0 for Female/Other
-        const genderValue = (gender === 'Male' || gender === 1) ? 1 : 0;
-        const now = toMySQLDatetime(new Date());
+    if (existingUser.length > 0) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message:
+          "Mobile number already registered. Please use a different number.",
+      });
+    }
 
-        const insertUserQuery = `
+    let roleId = null;
+    if (role) {
+      const [roleRows] = await connection.query(
+        "SELECT id FROM users_role WHERE id = ? OR name = ?",
+        [role, role],
+      );
+      if (roleRows.length > 0) roleId = roleRows[0].id;
+    }
+
+    // Gender: 1 for Male, 0 for Female/Other
+    const genderValue = gender === "Male" || gender === 1 ? 1 : 0;
+    const now = toMySQLDatetime(new Date());
+
+    const insertUserQuery = `
             INSERT INTO users_customuser 
             (username, email, role_id, is_active, date_joined, is_superuser, is_staff, first_name, last_name, department_id, district_id, block_id, phone)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-        const [userResult] = await connection.query(insertUserQuery, [
-            officername, email, roleId, 1, now, 0, 0, officername, null, department, district_id, block_id, mobile
-        ]);
+    const [userResult] = await connection.query(insertUserQuery, [
+      officername,
+      email,
+      roleId,
+      1,
+      now,
+      0,
+      0,
+      officername,
+      null,
+      department,
+      district_id,
+      block_id,
+      mobile,
+    ]);
 
-        const userId = userResult.insertId;
+    const userId = userResult.insertId;
 
-        const insertOfficerQuery = `
+    const insertOfficerQuery = `
             INSERT INTO officer_details
             (\`officer name\`, \`Gender\`, \`Mobile\`, \`Email\`, \`Department\`, \`Designation\`, \`role\`, \`Username\`, \`district_id\`, \`block_id\`, \`created_by\`, \`created_at\`)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-        await connection.query(insertOfficerQuery, [
-            officername, genderValue, mobile, email, department, designation, roleId, userId, district_id, block_id, created_by || null, created_at ? toMySQLDatetime(new Date(created_at)) : now
-        ]);
+    await connection.query(insertOfficerQuery, [
+      officername,
+      genderValue,
+      mobile,
+      email,
+      department,
+      designation,
+      roleId,
+      userId,
+      district_id,
+      block_id,
+      created_by || null,
+      created_at ? toMySQLDatetime(new Date(created_at)) : now,
+    ]);
 
-        await connection.commit();
-        res.status(201).json({ 
-            success: true,
-            message: "Officer registered successfully", 
-            user_id: userId 
-        });
+    await connection.commit();
+    res.status(201).json({
+      success: true,
+      message: "Officer registered successfully",
+      user_id: userId,
+    });
+  } catch (err) {
+    await connection.rollback();
+    console.error("Registration Error:", err);
 
-    } catch (err) {
-        await connection.rollback();
-        console.error("Registration Error:", err);
-        
-        if (err.code === 'ER_NO_REFERENCED_ROW_2') {
-             return res.status(400).json({ 
-                success: false,
-                message: "Invalid Reference: Selected Department, Designation, Role, or District does not exist." 
-            });
-        }
-        
-        res.status(500).json({ 
-            success: false,
-            error: err.message 
-        });
-    } finally {
-        connection.release();
+    if (err.code === "ER_NO_REFERENCED_ROW_2") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid Reference: Selected Department, Designation, Role, or District does not exist.",
+      });
     }
+
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  } finally {
+    connection.release();
+  }
 };
 // --- UPDATE OFFICER ---
 exports.updateOfficer = async (req, res) => {
@@ -253,11 +277,20 @@ exports.updateOfficer = async (req, res) => {
 
     const { id } = req.params;
     const {
-      officername, gender, mobile, email, department, designation, role, district_id, block_id
+      officername,
+      gender,
+      mobile,
+      email,
+      department,
+      designation,
+      role,
+      district_id,
+      block_id,
     } = req.body;
 
     const [officerRows] = await connection.query(
-      'SELECT Username FROM officer_details WHERE id = ?', [id]
+      "SELECT Username FROM officer_details WHERE id = ?",
+      [id],
     );
     if (!officerRows.length) {
       await connection.rollback();
@@ -266,12 +299,13 @@ exports.updateOfficer = async (req, res) => {
     const userId = officerRows[0].Username;
 
     const [roleRows] = await connection.query(
-        'SELECT id FROM users_role WHERE id = ? OR name = ?', [role, role]
+      "SELECT id FROM users_role WHERE id = ? OR name = ?",
+      [role, role],
     );
     const roleId = roleRows.length > 0 ? roleRows[0].id : null;
 
     // Gender Logic
-    const genderValue = (gender === 'Male' || gender === 1) ? 1 : 0;
+    const genderValue = gender === "Male" || gender === 1 ? 1 : 0;
 
     const updateOfficerQuery = `
       UPDATE officer_details 
@@ -279,7 +313,16 @@ exports.updateOfficer = async (req, res) => {
       WHERE id = ?`;
 
     await connection.query(updateOfficerQuery, [
-      officername, genderValue, mobile, email, department, designation, roleId, district_id || null, block_id || null, id
+      officername,
+      genderValue,
+      mobile,
+      email,
+      department,
+      designation,
+      roleId,
+      district_id || null,
+      block_id || null,
+      id,
     ]);
 
     const updateUserQuery = `
@@ -288,7 +331,14 @@ exports.updateOfficer = async (req, res) => {
       WHERE id = ?`;
 
     await connection.query(updateUserQuery, [
-      officername, email, department, district_id || null, block_id || null, roleId, mobile, userId
+      officername,
+      email,
+      department,
+      district_id || null,
+      block_id || null,
+      roleId,
+      mobile,
+      userId,
     ]);
 
     await connection.commit();
@@ -303,82 +353,82 @@ exports.updateOfficer = async (req, res) => {
 };
 // --- DELETE OFFICER ---
 exports.deleteOfficer = async (req, res) => {
-    const connection = await db.getConnection();
-    try {
-        await connection.beginTransaction();
-        const { id } = req.params;
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { id } = req.params;
 
-        const [officerData] = await connection.query(
-            'SELECT Username FROM officer_details WHERE id = ?', [id]
-        );
+    const [officerData] = await connection.query(
+      "SELECT Username FROM officer_details WHERE id = ?",
+      [id],
+    );
 
-        if (!officerData.length) {
-            await connection.rollback();
-            return res.status(404).json({ message: "Officer not found" });
-        }
-
-        const userId = officerData[0].Username;
-
-        await connection.query('DELETE FROM officer_details WHERE id = ?', [id]);
-
-        if (userId) {
-            await connection.query('DELETE FROM users_customuser WHERE id = ?', [userId]);
-        }
-
-        await connection.commit();
-        res.json({ message: "Officer deleted successfully" });
-
-    } catch (err) {
-        await connection.rollback();
-        console.error("Delete Error:", err);
-        res.status(500).json({ error: err.message });
-    } finally {
-        connection.release();
+    if (!officerData.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Officer not found" });
     }
+
+    const userId = officerData[0].Username;
+
+    await connection.query("DELETE FROM officer_details WHERE id = ?", [id]);
+
+    if (userId) {
+      await connection.query("DELETE FROM users_customuser WHERE id = ?", [
+        userId,
+      ]);
+    }
+
+    await connection.commit();
+    res.json({ message: "Officer deleted successfully" });
+  } catch (err) {
+    await connection.rollback();
+    console.error("Delete Error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
 };
 // GET all departments
 exports.getDepartments = async (req, res) => {
-    try {
-        const [rows] = await db.query(
-            "SELECT id, name FROM department ORDER BY id "
-        );
-        res.json(rows);
-    } catch (err) {
-        console.error("Get Departments Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
-    }
+  try {
+    const [rows] = await db.query(
+      "SELECT id, name FROM department ORDER BY id ",
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("Get Departments Error:", err);
+    res.status(500).json({
+      error: err.message,
+    });
+  }
 };
 // CREATE department
 exports.createDepartment = async (req, res) => {
-    try {
-        const {
-            name
-        } = req.body;
+  try {
+    const { name } = req.body;
 
-        if (!name) {
-            return res.status(400).json({
-                message: "Department name is required"
-            });
-        }
-
-        const [result] = await db.query(
-            "INSERT INTO department (name) VALUES (?)",
-            [name]
-        );
-
-        res.status(201).json({
-            message: "Department created successfully",
-            id: result.insertId,
-            name
-        });
-    } catch (err) {
-        console.error("Create Department Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
+    if (!name) {
+      return res.status(400).json({
+        message: "Department name is required",
+      });
     }
+
+    const [result] = await db.query(
+      "INSERT INTO department (name) VALUES (?)",
+      [name],
+    );
+
+    res.status(201).json({
+      message: "Department created successfully",
+      id: result.insertId,
+      name,
+    });
+  } catch (err) {
+    console.error("Create Department Error:", err);
+    res.status(500).json({
+      error: err.message,
+    });
+  }
 };
 // UPDATE department
 exports.updateDepartment = async (req, res) => {
@@ -388,15 +438,19 @@ exports.updateDepartment = async (req, res) => {
     const { name } = req.body;
 
     if (!id) {
-      return res.status(400).json({ message: "Department ID is required in query parameter" });
+      return res
+        .status(400)
+        .json({ message: "Department ID is required in query parameter" });
     }
     if (!name) {
-      return res.status(400).json({ message: "New department name is required in request body" });
+      return res
+        .status(400)
+        .json({ message: "New department name is required in request body" });
     }
 
     const [result] = await db.query(
       "UPDATE department SET name = ? WHERE id = ?",
-      [name, id]
+      [name, id],
     );
 
     if (result.affectedRows === 0) {
@@ -406,7 +460,7 @@ exports.updateDepartment = async (req, res) => {
     res.json({
       message: "Department updated successfully",
       id,
-      name
+      name,
     });
   } catch (err) {
     console.error("Update Department Error:", err);
@@ -419,13 +473,14 @@ exports.deleteDepartment = async (req, res) => {
     const { id } = req.query;
 
     if (!id) {
-      return res.status(400).json({ message: "Department ID is required in query parameter" });
+      return res
+        .status(400)
+        .json({ message: "Department ID is required in query parameter" });
     }
 
-    const [result] = await db.query(
-      "DELETE FROM department WHERE id = ?",
-      [id]
-    );
+    const [result] = await db.query("DELETE FROM department WHERE id = ?", [
+      id,
+    ]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Department not found" });
@@ -446,11 +501,18 @@ exports.getDesignation = async (req, res) => {
     const offset = (page - 1) * limit;
 
     if (page < 1 || limit < 1) {
-      return res.status(400).json({ success: false, message: "Invalid pagination values" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid pagination values" });
     }
 
-    const [[{ total }]] = await db.query("SELECT COUNT(*) AS total FROM designation");
-    const [rows] = await db.query("SELECT id, name FROM designation ORDER BY id DESC LIMIT ? OFFSET ?", [limit, offset]);
+    const [[{ total }]] = await db.query(
+      "SELECT COUNT(*) AS total FROM designation",
+    );
+    const [rows] = await db.query(
+      "SELECT id, name FROM designation ORDER BY id DESC LIMIT ? OFFSET ?",
+      [limit, offset],
+    );
 
     // include pagination meta if you want, otherwise return rows only (you previously asked to return array only)
     res.json(rows);
@@ -461,101 +523,217 @@ exports.getDesignation = async (req, res) => {
 };
 // CREATE designation
 exports.createDesignation = async (req, res) => {
-    try {
-        const { name } = req.body || {};
+  try {
+    const { name } = req.body || {};
 
-        if (!name) {
-            return res.status(400).json({
-                message: "Designation name is required"
-            });
-        }
-
-        const [result] = await db.query(
-            "INSERT INTO designation (name) VALUES (?)",
-            [name]
-        );
-
-        res.status(201).json({
-            message: "Designation created successfully",
-            id: result.insertId,
-            name
-        });
-    } catch (err) {
-        console.error("Create Designation Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
+    if (!name) {
+      return res.status(400).json({
+        message: "Designation name is required",
+      });
     }
+
+    const [result] = await db.query(
+      "INSERT INTO designation (name) VALUES (?)",
+      [name],
+    );
+
+    res.status(201).json({
+      message: "Designation created successfully",
+      id: result.insertId,
+      name,
+    });
+  } catch (err) {
+    console.error("Create Designation Error:", err);
+    res.status(500).json({
+      error: err.message,
+    });
+  }
 };
-// 
+//
 exports.updateDesignation = async (req, res) => {
-    try {
-        const { id } = req.query; // read id from query
-        const { name } = req.body;
+  try {
+    const { id } = req.query; // read id from query
+    const { name } = req.body;
 
-        if (!id) {
-            return res.status(400).json({ message: "Designation id is required" });
-        }
-        if (!name) {
-            return res.status(400).json({ message: "Designation name is required" });
-        }
-
-        const [result] = await db.query(
-            "UPDATE designation SET name = ? WHERE id = ?",
-            [name, id]
-        );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: "Designation not found" });
-        }
-
-        res.json({ message: "Designation updated successfully", id, name });
-    } catch (err) {
-        console.error("Update Designation Error:", err);
-        res.status(500).json({ error: err.message });
+    if (!id) {
+      return res.status(400).json({ message: "Designation id is required" });
     }
+    if (!name) {
+      return res.status(400).json({ message: "Designation name is required" });
+    }
+
+    const [result] = await db.query(
+      "UPDATE designation SET name = ? WHERE id = ?",
+      [name, id],
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Designation not found" });
+    }
+
+    res.json({ message: "Designation updated successfully", id, name });
+  } catch (err) {
+    console.error("Update Designation Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
-// 
+//
 exports.deleteDesignation = async (req, res) => {
-    try {
-        const { id } = req.query; // read id from query
+  try {
+    const { id } = req.query; // read id from query
 
-        if (!id) {
-            return res.status(400).json({ message: "Designation id is required" });
-        }
-
-        const [result] = await db.query(
-            "DELETE FROM designation WHERE id = ?",
-            [id]
-        );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: "Designation not found" });
-        }
-
-        res.json({ message: "Designation deleted successfully", id });
-    } catch (err) {
-        console.error("Delete Designation Error:", err);
-        res.status(500).json({ error: err.message });
+    if (!id) {
+      return res.status(400).json({ message: "Designation id is required" });
     }
+
+    const [result] = await db.query("DELETE FROM designation WHERE id = ?", [
+      id,
+    ]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Designation not found" });
+    }
+
+    res.json({ message: "Designation deleted successfully", id });
+  } catch (err) {
+    console.error("Delete Designation Error:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 // ===================== GET USERNAMES =====================
 exports.getUsernames = async (req, res) => {
-    try {
-        const [usernames] = await db.query('SELECT id, username FROM users_customuser'); // Adjust as per your database structure
-        res.json(usernames);
-    } catch (err) {
-        console.error("Get Usernames Error:", err);
-        res.status(500).json({
-            error: err.message
-        });
-    }
+  try {
+    const [usernames] = await db.query(
+      "SELECT id, username FROM users_customuser",
+    ); // Adjust as per your database structure
+    res.json(usernames);
+  } catch (err) {
+    console.error("Get Usernames Error:", err);
+    res.status(500).json({
+      error: err.message,
+    });
+  }
 };
 const withBaseUrl = (path) => {
   if (!path) return null;
   return `${process.env.BASE_URL}${path}`;
 };
-//  Get Farmer Orders
+// create inspection
+exports.createInspection = async (req, res) => {
+  try {
+    const { request_id, farmer_id, field_inspector_id } = req.body;
+
+    if (!request_id || !farmer_id || !field_inspector_id) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // ✅ LOGIC: 'field_inspector_id' now holds the BLOCK ADMIN's ID
+    const [result] = await db.execute(
+      `INSERT INTO inspections (request_id, farmer_id, field_inspector_id, inspection_date)
+       VALUES (?, ?, ?, NULL)`,
+      [request_id, farmer_id, field_inspector_id],
+    );
+
+    return res.json({
+      success: true,
+      message: "Inspection created successfully",
+      inspection_id: result.insertId,
+    });
+  } catch (err) {
+    console.error("Create Inspection Error:", err);
+    res.status(500).json({ message: "Server error", err: err.message });
+  }
+};
+//  UPLOAD INSPECTION DETAILS
+exports.uploadInspectionDetails = async (req, res) => {
+  try {
+    const {
+      inspection_id,
+      inspection_address,
+      latitude,
+      longitude,
+      survey_count,
+      inspected_by,
+      sapplings,
+    } = req.body;
+
+    if (!inspection_id)
+      return res.status(400).json({ message: "Inspection ID is required" });
+    if (!req.file || !req.file.filename)
+      return res.status(400).json({ message: "No file uploaded" });
+
+    const image = req.file.filename;
+
+    // ✅ LOGIC: 'inspected_by' now holds the BLOCK ADMIN's ID
+    const sql = `
+      INSERT INTO inspection_uploads
+      (inspection_id, image, reason_for_reject, inspection_address, latitude, longitude, survey_count, inspected_by)
+      VALUES (?, ?, '', ?, ?, ?, ?, ?)
+    `;
+
+    const result = await db.query(sql, [
+      inspection_id,
+      image,
+      inspection_address,
+      latitude,
+      longitude,
+      survey_count,
+      inspected_by,
+    ]);
+
+    const uploadId = result[0].insertId;
+
+    // Parse sapplings
+    let parsedSapplings = sapplings;
+    if (typeof sapplings === "string") {
+      try {
+        parsedSapplings = JSON.parse(sapplings);
+      } catch (e) {
+        parsedSapplings = null;
+      }
+    }
+
+    if (parsedSapplings && Array.isArray(parsedSapplings)) {
+      const sapplingValues = parsedSapplings.map((item) => [
+        uploadId,
+        item.sapplingname,
+        item.survey_count,
+      ]);
+      const sapplingSql = `INSERT INTO inspection_sapplings (upload_id, sappling_name, survey_count) VALUES ?`;
+      await db.query(sapplingSql, [sapplingValues]);
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    const [inspRows] = await db.query(
+      `SELECT remarks FROM inspections WHERE id = ?`,
+      [inspection_id],
+    );
+
+    if (inspRows.length > 0) {
+      const oldRemarks = inspRows[0].remarks || "";
+      const uploadRemark = `Inspection uploaded on ${today} (${survey_count} saplings found).`;
+      await db.query(
+        `UPDATE inspections SET inspection_date = ?, remarks = ? WHERE id = ?`,
+        [
+          today,
+          oldRemarks ? `${oldRemarks} | ${uploadRemark}` : uploadRemark,
+          inspection_id,
+        ],
+      );
+    }
+
+    return res.json({
+      message: "Upload successful",
+      uploadId: uploadId,
+    });
+  } catch (error) {
+    console.error("Upload Error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error", err: error.message });
+  }
+};
+//  GET FARMER ORDERS
 exports.getFarmerOrders = async (req, res) => {
   try {
     const user_id = req.params.userid;
@@ -566,10 +744,11 @@ exports.getFarmerOrders = async (req, res) => {
 
     const [userRows] = await db.execute(
       `SELECT district_id, block_id, department_id, village_id FROM users_customuser WHERE id = ?`,
-      [user_id]
+      [user_id],
     );
 
-    if (!userRows.length) return res.status(404).json({ message: "User not found" });
+    if (!userRows.length)
+      return res.status(404).json({ message: "User not found" });
     const user = userRows[0];
 
     let baseSql = `
@@ -583,358 +762,195 @@ exports.getFarmerOrders = async (req, res) => {
       WHERE ufr.status = 'billed' AND ufr.type = 'scheme'
     `;
     let params = [];
+    console.log("user", user);
 
-    if (role === "district_admin") { baseSql += ` AND pc.district_id = ?`; params.push(user.district_id); }
-    else if (role === "block_admin") { baseSql += ` AND pc.block_id = ?`; params.push(user.block_id); }
-    else if (role === "department_admin") { baseSql += ` AND pc.department_id = ?`; params.push(user.department_id); }
-    else if (role === "field_inspector") { baseSql += ` AND pc.village_id = ?`; params.push(user.village_id); }
+    // ✅ LOGIC: Block Admin filters by block_id
+    if (role === "district_admin") {
+      baseSql += ` AND pc.district_id = ?`;
+      params.push(user.district_id);
+    } else if (role === "block_admin") {
+      // baseSql += ` AND pc.block_id = ?`;
+      // params.push(user.block_id);
+      baseSql += ` AND pc.village_id = ?`;
+      params.push(user.village_id);
+    } else if (role === "department_admin") {
+      baseSql += ` AND pc.department_id = ?`;
+      params.push(user.department_id);
+    }
 
-    const [[countResult]] = await db.execute(`SELECT COUNT(DISTINCT ufr.id) as total ${baseSql}`, params);
+    const [[countResult]] = await db.execute(
+      `SELECT COUNT(DISTINCT ufr.id) as total ${baseSql}`,
+      params,
+    );
     const totalRecords = countResult.total;
 
-    const [orders] = await db.execute(`
+    const [orders] = await db.execute(
+      `
       SELECT ufr.id AS request_id, ufr.orderid, ufr.farmer_id, ufr.created_at,
         fad.farmer_name, fad.mobile_number, fad.address,
         fad.latitude AS farmer_latitude, fad.longitude AS farmer_longitude,
         d.District_Name, b.Block_Name, v.village_name,
         pc.id AS production_center_id, pc.name_of_production_centre, pc.complete_address,
-        pc.district_id AS pc_district_id, pc.block_id AS pc_block_id, 
+        pc.district_id AS pc_district_id, pc.block_id AS pc_block_id,
         pc.department_id AS pc_department_id, pc.village_id AS pc_village_id
-      ${baseSql} 
-      ORDER BY ufr.created_at DESC 
+      ${baseSql}
+      ORDER BY ufr.created_at DESC
       LIMIT ${limit} OFFSET ${offset}
-    `, params);
+    `,
+      params,
+    );
 
     if (!orders.length) {
-      return res.json({ success: true, total_records: totalRecords, current_page: page, data: [] });
+      return res.json({
+        success: true,
+        total_records: totalRecords,
+        current_page: page,
+        data: [],
+      });
     }
 
     // 1. Get Items
-    const requestIds = orders.map(o => o.request_id);
-    const [items] = await db.execute(`
+    const requestIds = orders.map((o) => o.request_id);
+    const [items] = await db.execute(
+      `
       SELECT ufi.request_id, ufi.stock_id, ufi.final_quantity, ufi.scheme_id,
              ts.name AS scheme_name, t.name AS species_name, t.name_tamil AS species_name_tamil
       FROM users_farmerrequestitem ufi
       LEFT JOIN tn_schema ts ON ts.id = ufi.scheme_id
       LEFT JOIN tbl_agroforest_trees t ON t.id = ufi.species_id
-      WHERE ufi.request_id IN (${requestIds.map(() => '?').join(',')})
-    `, requestIds);
+      WHERE ufi.request_id IN (${requestIds.map(() => "?").join(",")})
+    `,
+      requestIds,
+    );
 
     const itemsMap = {};
     const schemeMap = {};
-    items.forEach(i => {
+    items.forEach((i) => {
       if (!itemsMap[i.request_id]) itemsMap[i.request_id] = [];
       itemsMap[i.request_id].push({
-        request_id: i.request_id, stock_id: i.stock_id, final_quantity: i.final_quantity,
-        species_name: i.species_name, species_name_tamil: i.species_name_tamil
+        request_id: i.request_id,
+        stock_id: i.stock_id,
+        final_quantity: i.final_quantity,
+        species_name: i.species_name,
+        species_name_tamil: i.species_name_tamil,
       });
-      if (!schemeMap[i.request_id] && i.scheme_id) schemeMap[i.request_id] = { id: i.scheme_id, name: i.scheme_name };
+      if (!schemeMap[i.request_id] && i.scheme_id)
+        schemeMap[i.request_id] = { id: i.scheme_id, name: i.scheme_name };
     });
 
     // 2. Get Inspections + Uploads
     let inspectionMap = {};
     if (requestIds.length) {
-      const [inspections] = await db.execute(`
-        SELECT * FROM inspections WHERE request_id IN (${requestIds.map(() => '?').join(',')})
-      `, requestIds);
-      
-      const inspectionIds = inspections.map(i => i.id);
+      const [inspections] = await db.execute(
+        `
+        SELECT * FROM inspections WHERE request_id IN (${requestIds.map(() => "?").join(",")})
+        `,
+        requestIds,
+      );
+
+      const inspectionIds = inspections.map((i) => i.id);
       let uploadMap = {};
 
       if (inspectionIds.length) {
-        // ✅ UPDATED: Added LEFT JOIN for 'ap' (Approver User) to get approved_by name
-   const [uploads] = await db.execute(`
-  SELECT iu.id, iu.inspection_id, iu.image, iu.inspection_address,
-         iu.latitude, iu.longitude, iu.survey_count, iu.inspected_by,
-         iu.verification_status, iu.created_at, iu.approved_by,
-         cu.first_name, cu.last_name,
-         CONCAT(cu.first_name, ' ', cu.last_name) AS user_full_name,
-         ap.first_name AS approver_first_name, 
-         ap.last_name AS approver_last_name,
-         CONCAT(ap.first_name, ' ', ap.last_name) AS approver_full_name
-  FROM inspection_uploads iu
-  LEFT JOIN users_customuser cu ON cu.id = iu.inspected_by
-  LEFT JOIN users_customuser ap ON ap.id = iu.approved_by
-  WHERE iu.inspection_id IN (${inspectionIds.map(() => '?').join(',')})
-  ORDER BY iu.created_at DESC
-`, inspectionIds);
+        // ✅ LOGIC: Join 'inspected_by' with user table to get "Inspected By" name
+        const [uploads] = await db.execute(
+          `
+          SELECT iu.id, iu.inspection_id, iu.image, iu.inspection_address,
+                 iu.latitude, iu.longitude, iu.survey_count, iu.inspected_by,
+                 iu.verification_status, iu.created_at,
+                 cu.first_name, cu.last_name,
+                 CONCAT(cu.first_name, ' ', cu.last_name) AS user_full_name
+          FROM inspection_uploads iu
+          LEFT JOIN users_customuser cu ON cu.id = iu.inspected_by
+          WHERE iu.inspection_id IN (${inspectionIds.map(() => "?").join(",")})
+          ORDER BY iu.created_at DESC
+        `,
+          inspectionIds,
+        );
 
-        uploads.forEach(u => {
+        uploads.forEach((u) => {
           if (!uploadMap[u.inspection_id]) uploadMap[u.inspection_id] = [];
-          
-          const imagePath = process.env.BASE_URL 
-            ? `${process.env.BASE_URL}/uploads/${u.image}` 
+
+          const imagePath = process.env.BASE_URL
+            ? `${process.env.BASE_URL}/uploads/${u.image}`
             : `/uploads/${u.image}`;
 
-        const inspectorName = u.user_full_name?.trim() || "Unknown";
+          // This name will be the Block Admin's name
+          const inspectorName = u.user_full_name?.trim() || "Unknown";
 
-const approverName = u.approver_full_name?.trim() || "Unknown";
           uploadMap[u.inspection_id].push({
-            id: u.id, image: imagePath, inspection_address: u.inspection_address,
-            latitude: u.latitude, longitude: u.longitude, survey_count: u.survey_count,
+            id: u.id,
+            image: imagePath,
+            inspection_address: u.inspection_address,
+            latitude: u.latitude,
+            longitude: u.longitude,
+            survey_count: u.survey_count,
             inspected_by: u.inspected_by,
-            inspected_by_name: inspectorName,
-            approved_by: u.approved_by, // ✅ NEW FIELD
-            approved_by_name: approverName, // ✅ NEW FIELD
-            verification_status: u.verification_status || 'pending',
-            uploaded_at: u.created_at
+            inspected_by_name: inspectorName, // ✅ POPULATED HERE
+            verification_status: "submitted",
+            uploaded_at: u.created_at,
           });
         });
       }
 
-      inspections.forEach(ins => {
+      inspections.forEach((ins) => {
         if (!inspectionMap[ins.request_id]) inspectionMap[ins.request_id] = [];
         inspectionMap[ins.request_id].push({
-          id: ins.id, farmer_id: ins.farmer_id, field_inspector_id: ins.field_inspector_id,
-          inspection_date: ins.inspection_date, remarks: ins.remarks,
-          created_at: ins.created_at, uploads: uploadMap[ins.id] || []
+          id: ins.id,
+          farmer_id: ins.farmer_id,
+          field_inspector_id: ins.field_inspector_id,
+          inspection_date: ins.inspection_date,
+          remarks: ins.remarks,
+          created_at: ins.created_at,
+          uploads: uploadMap[ins.id] || [],
         });
       });
     }
 
     // 3. Final Data Mapping
-    const result = orders.map(order => ({
-      order_id: order.orderid, order_date: order.created_at,
+    const result = orders.map((order) => ({
+      order_id: order.orderid,
+      order_date: order.created_at,
       scheme: schemeMap[order.request_id] || null,
-      farmer: order.farmer_id ? { 
-        id: order.farmer_id, name: order.farmer_name, mobile: order.mobile_number, address: order.address, 
-        location: { district: order.District_Name, block: order.Block_Name, village: order.village_name, latitude: order.farmer_latitude, longitude: order.farmer_longitude } 
-      } : null,
-      production_center: order.production_center_id ? { 
-        id: order.production_center_id, name: order.name_of_production_centre, address: order.complete_address, 
-        district_id: order.pc_district_id, block_id: order.pc_block_id, department_id: order.pc_department_id, village_id: order.pc_village_id 
-      } : null,
+      farmer: order.farmer_id
+        ? {
+            id: order.farmer_id,
+            name: order.farmer_name,
+            mobile: order.mobile_number,
+            address: order.address,
+            location: {
+              district: order.District_Name,
+              block: order.Block_Name,
+              village: order.village_name,
+              latitude: order.farmer_latitude,
+              longitude: order.farmer_longitude,
+            },
+          }
+        : null,
+      production_center: order.production_center_id
+        ? {
+            id: order.production_center_id,
+            name: order.name_of_production_centre,
+            address: order.complete_address,
+            district_id: order.pc_district_id,
+            block_id: order.pc_block_id,
+            department_id: order.pc_department_id,
+            village_id: order.pc_village_id,
+          }
+        : null,
       inspections: inspectionMap[order.request_id] || [],
-      items: itemsMap[order.request_id] || []
+      items: itemsMap[order.request_id] || [],
     }));
-
-    return res.json({ success: true, total_records: totalRecords, current_page: page, data: result });
-  } catch (err) {
-    console.error("ERROR:", err);
-    res.status(500).json({ message: "Server Error", err: err.message });
-  }
-};
-
-// 
-exports.uploadInspectionDetails = async (req, res) => {
-  try {
-    const { inspection_id, inspection_address, latitude, longitude, survey_count, inspected_by, sapplings } = req.body;
-
-    if (!inspection_id) return res.status(400).json({ message: "Inspection ID is required" });
-    if (!req.file || !req.file.filename) return res.status(400).json({ message: "No file uploaded" });
-
-    const image = req.file.filename;
-
-    const sql = `
-      INSERT INTO inspection_uploads 
-      (inspection_id, image, reason_for_reject, inspection_address, latitude, longitude, survey_count, inspected_by) 
-      VALUES (?, ?, '', ?, ?, ?, ?, ?)
-    `;
-
-    const result = await db.query(sql, [
-      inspection_id,
-      image,
-      inspection_address,
-      latitude,
-      longitude,
-      survey_count,
-      inspected_by
-    ]);
-    
-    const uploadId = result[0].insertId;
-
-    // Parse sapplings
-    let parsedSapplings = sapplings;
-    if (typeof sapplings === 'string') {
-      try { parsedSapplings = JSON.parse(sapplings); } catch (e) { parsedSapplings = null; }
-    }
-
-    if (parsedSapplings && Array.isArray(parsedSapplings)) {
-      const sapplingValues = parsedSapplings.map(item => [uploadId, item.sapplingname, item.survey_count]);
-      const sapplingSql = `INSERT INTO inspection_sapplings (upload_id, sappling_name, survey_count) VALUES ?`;
-      await db.query(sapplingSql, [sapplingValues]);
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    const [inspRows] = await db.query(`SELECT remarks FROM inspections WHERE id = ?`, [inspection_id]);
-
-    if (inspRows.length > 0) {
-      const oldRemarks = inspRows[0].remarks || "";
-      const uploadRemark = `Inspection uploaded on ${today} (${survey_count} saplings found).`;
-      await db.query(
-        `UPDATE inspections SET inspection_date = ?, remarks = ? WHERE id = ?`,
-        [today, oldRemarks ? `${oldRemarks} | ${uploadRemark}` : uploadRemark, inspection_id]
-      );
-    }
-
-    return res.json({ 
-      message: "Upload successful", 
-      uploadId: uploadId
-    });
-
-  } catch (error) {
-    console.error("Upload Error:", error);
-    return res.status(500).json({ message: "Server error", err: error.message });
-  }
-};
-
-// 
-exports.createInspection = async (req, res) => {
-  try {
-    const { request_id, farmer_id, field_inspector_id } = req.body;
-   
-    if (!request_id || !farmer_id || !field_inspector_id) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-
-    // Check if there's already a pending inspection
-    const [existingInspections] = await db.execute(`
-      SELECT i.id, iu.verification_status 
-      FROM inspections i
-      LEFT JOIN inspection_uploads iu ON iu.inspection_id = i.id AND iu.verification_status = 'pending'
-      WHERE i.request_id = ?
-      ORDER BY i.id DESC
-      LIMIT 1
-    `, [request_id]);
-
-    if (existingInspections.length > 0) {
-      const lastInspection = existingInspections[0];
-      if (lastInspection.verification_status === 'pending') {
-        return res.status(400).json({
-          message: "Cannot create new inspection. Previous inspection is still pending review."
-        });
-      }
-    }
-
-    // Create new inspection
-    const [result] = await db.execute(
-      `INSERT INTO inspections (request_id, farmer_id, field_inspector_id, inspection_date)
-       VALUES (?, ?, ?, NULL)`,
-      [request_id, farmer_id, field_inspector_id]
-    );
 
     return res.json({
       success: true,
-      message: "Inspection created successfully",
-      inspection_id: result.insertId
+      total_records: totalRecords,
+      current_page: page,
+      data: result,
     });
-
   } catch (err) {
-    console.error("Create Inspection Error:", err);
-    res.status(500).json({ message: "Server error", err: err.message });
-  }
-};
-
-// 
-exports.approveInspection = async (req, res) => {
-  try {
-    const inspectionId = req.params.id;
-    const { approved_by } = req.body; // ✅ UPDATED: Get admin ID
-
-    // Find the LATEST pending upload for this inspection
-    const [uploads] = await db.query(`
-      SELECT id FROM inspection_uploads 
-      WHERE inspection_id = ? AND verification_status = 'pending'
-      ORDER BY id DESC LIMIT 1
-    `, [inspectionId]);
-
-    if (!uploads.length) {
-      return res.status(404).json({
-        message: "No pending upload found for this inspection to approve."
-      });
-    }
-
-    const uploadId = uploads[0].id;
-
-    // Update verification status AND approved_by
-    await db.query(`
-      UPDATE inspection_uploads 
-      SET verification_status = 'approved', approved_by = ?
-      WHERE id = ?
-    `, [approved_by, uploadId]); // ✅ UPDATED: Added approved_by to update
-
-    // Add approval remark
-    const [inspRows] = await db.query(
-      `SELECT remarks FROM inspections WHERE id = ?`,
-      [inspectionId]
-    );
-
-    if (inspRows.length > 0) {
-      const oldRemarks = inspRows[0].remarks || "";
-      const approveRemark = `Approved on ${new Date().toISOString().split('T')[0]}.`;
-
-      await db.query(
-        `UPDATE inspections SET remarks = ? WHERE id = ?`,
-        [
-          oldRemarks ? `${oldRemarks} | ${approveRemark}` : approveRemark,
-          inspectionId
-        ]
-      );
-    }
-
-    return res.json({ message: "Inspection approved successfully" });
-
-  } catch (error) {
-    console.error("Approve Error:", error);
-    return res.status(500).json({ message: "Server error", err: error.message });
-  }
-};
-
-// 
-exports.rejectInspection = async (req, res) => {
-  try {
-    const inspectionId = req.params.id;
-    const { reason_for_reject } = req.body;
-
-    // Find the LATEST pending upload
-    const [uploads] = await db.query(`
-      SELECT id FROM inspection_uploads 
-      WHERE inspection_id = ? AND verification_status = 'pending'
-      ORDER BY id DESC LIMIT 1
-    `, [inspectionId]);
-
-    if (!uploads.length) {
-      return res.status(404).json({
-        message: "No pending upload found for this inspection to reject."
-      });
-    }
-
-    const uploadId = uploads[0].id;
-
-    // Update verification status
-    await db.query(`
-      UPDATE inspection_uploads
-      SET verification_status = 'rejected'
-      WHERE id = ?
-    `, [uploadId]);
-
-    // Add rejection remark
-    const [inspRows] = await db.query(
-      `SELECT remarks FROM inspections WHERE id = ?`,
-      [inspectionId]
-    );
-
-    if (inspRows.length > 0) {
-      const oldRemarks = inspRows[0].remarks || "";
-      const rejectRemark = `Rejected on ${new Date().toISOString().split('T')[0]}. Reason: ${reason_for_reject || 'No reason provided'}.`;
-
-      await db.query(
-        `UPDATE inspections SET remarks = ? WHERE id = ?`,
-        [
-          oldRemarks ? `${oldRemarks} | ${rejectRemark}` : rejectRemark,
-          inspectionId
-        ]
-      );
-    }
-
-    return res.json({
-      message: "Inspection rejected successfully",
-      reason_for_reject: reason_for_reject || null
-    });
-
-  } catch (error) {
-    console.error("Reject Error:", error);
-    return res.status(500).json({ message: "Server error", err: error.message });
+    console.error("ERROR:", err);
+    res.status(500).json({ message: "Server Error", err: err.message });
   }
 };
 // get all schems
@@ -951,13 +967,16 @@ exports.getSchemes = async (req, res) => {
     const baseSql = `FROM tn_schema`;
 
     // 2. Pagination Count
-    const [[countResult]] = await db.execute(`SELECT COUNT(*) as total ${baseSql}`);
+    const [[countResult]] = await db.execute(
+      `SELECT COUNT(*) as total ${baseSql}`,
+    );
     const totalRecords = countResult.total;
     const totalPages = Math.ceil(totalRecords / limit);
 
     // 3. Fetch Data
     // Getting ID, Name, and the other columns from your table description
-    const [schemes] = await db.execute(`
+    const [schemes] = await db.execute(
+      `
       SELECT 
         id, 
         name, 
@@ -966,24 +985,25 @@ exports.getSchemes = async (req, res) => {
       ${baseSql} 
       ORDER BY id ASC 
       LIMIT ? OFFSET ?
-    `, [limit, offset]);
+    `,
+      [limit, offset],
+    );
 
     // 4. Format Response
-    const result = schemes.map(s => ({
+    const result = schemes.map((s) => ({
       id: s.id,
       name: s.name,
       percentage: s.percentage,
-      species_preferred: s.species_preferred
+      species_preferred: s.species_preferred,
     }));
 
-    return res.json({ 
-      success: true, 
-      total_records: totalRecords, 
-      total_pages: totalPages, 
-      current_page: page, 
-      data: result 
+    return res.json({
+      success: true,
+      total_records: totalRecords,
+      total_pages: totalPages,
+      current_page: page,
+      data: result,
     });
-
   } catch (err) {
     console.error("ERROR:", err);
     res.status(500).json({ message: "Server Error", err });
@@ -994,16 +1014,17 @@ exports.getProductionCenters = async (req, res) => {
   try {
     const user_id = req.params.userid;
     const role = req.params.role;
-    
+
     console.log("Fetching Production Centers for:", user_id, role);
-    
+
     // 1. Get User Details to identify jurisdiction
     const [userRows] = await db.execute(
       `SELECT district_id, block_id, department_id FROM users_customuser WHERE id = ?`,
-      [user_id]
+      [user_id],
     );
 
-    if (!userRows.length) return res.status(404).json({ message: "User not found" });
+    if (!userRows.length)
+      return res.status(404).json({ message: "User not found" });
     const user = userRows[0];
 
     // 2. Base Query
@@ -1014,28 +1035,29 @@ exports.getProductionCenters = async (req, res) => {
       WHERE pc.status = 'approved' 
       AND pc.production_type = 'private' 
     `;
-    
+
     // Grouping is required because of the Left Join with schemes
-    let groupSql = ` GROUP BY pc.id `; 
+    let groupSql = ` GROUP BY pc.id `;
 
     let params = [];
 
     // 3. Apply Role-Based Filtering
-    if (role === "district_admin") { 
-      baseSql += ` AND pc.district_id = ?`; 
-      params.push(user.district_id); 
-    } else if (role === "block_admin") { 
-      baseSql += ` AND pc.block_id = ?`; 
-      params.push(user.block_id); 
-    } else if (role === "department_admin") { 
-      baseSql += ` AND pc.department_id = ?`; 
-      params.push(user.department_id); 
+    if (role === "district_admin") {
+      baseSql += ` AND pc.district_id = ?`;
+      params.push(user.district_id);
+    } else if (role === "block_admin") {
+      baseSql += ` AND pc.block_id = ?`;
+      params.push(user.block_id);
+    } else if (role === "department_admin") {
+      baseSql += ` AND pc.department_id = ?`;
+      params.push(user.department_id);
     }
 
     // 4. Fetch Data
     // FIX: Replaced 'contact_number' with 'contact_person' & 'mobile_number'
     // FIX: Removed 'email' as it doesn't exist in your DB
-    const [centers] = await db.execute(`
+    const [centers] = await db.execute(
+      `
       SELECT 
         pc.id, 
         pc.name_of_production_centre, 
@@ -1047,20 +1069,21 @@ exports.getProductionCenters = async (req, res) => {
       ${baseSql} 
       ${groupSql}
       ORDER BY pc.id DESC
-    `, params);
+    `,
+      params,
+    );
 
     // 5. Format the result for the Frontend
     // Convert comma-separated string "1,2" to Array [1,2]
-    const result = centers.map(pc => ({
+    const result = centers.map((pc) => ({
       ...pc,
-      scheme_ids: pc.scheme_ids ? pc.scheme_ids.split(',').map(Number) : []
+      scheme_ids: pc.scheme_ids ? pc.scheme_ids.split(",").map(Number) : [],
     }));
 
-    return res.json({ 
-      success: true, 
-      data: result 
+    return res.json({
+      success: true,
+      data: result,
     });
-
   } catch (err) {
     console.error("ERROR fetching production centers:", err);
     res.status(500).json({ message: "Server Error", err });
@@ -1076,24 +1099,25 @@ exports.getAllSchemes = async (req, res) => {
       ORDER BY name ASC
     `);
 
-    return res.json({ 
-      success: true, 
-      data: schemes 
+    return res.json({
+      success: true,
+      data: schemes,
     });
-
   } catch (err) {
     console.error("ERROR fetching schemes:", err);
     res.status(500).json({ message: "Server Error", err });
   }
 };
-// 
+//
 exports.assignSchemes = async (req, res) => {
-  const connection = await db.getConnection(); 
+  const connection = await db.getConnection();
   try {
     const { center_id, scheme_ids } = req.body;
 
     if (!center_id) {
-      return res.status(400).json({ message: "Production Center ID is required" });
+      return res
+        .status(400)
+        .json({ message: "Production Center ID is required" });
     }
 
     // Start Transaction (Ensures data integrity)
@@ -1102,28 +1126,27 @@ exports.assignSchemes = async (req, res) => {
     // 1. Remove all existing schemes for this center
     await connection.execute(
       `DELETE FROM production_center_schemes WHERE production_center_id = ?`,
-      [center_id]
+      [center_id],
     );
 
     // 2. Insert new schemes if provided
     if (scheme_ids && scheme_ids.length > 0) {
       // Create bulk insert values: (center_id, scheme_id_1), (center_id, scheme_id_2)...
-      const values = scheme_ids.map(schemeId => [center_id, schemeId]);
-      
+      const values = scheme_ids.map((schemeId) => [center_id, schemeId]);
+
       // Insert multiple rows at once
       await connection.query(
         `INSERT INTO production_center_schemes (production_center_id, scheme_id) VALUES ?`,
-        [values]
+        [values],
       );
     }
 
     await connection.commit(); // Commit changes
 
-    return res.json({ 
-      success: true, 
-      message: "Schemes assigned successfully!" 
+    return res.json({
+      success: true,
+      message: "Schemes assigned successfully!",
     });
-
   } catch (err) {
     await connection.rollback(); // Rollback on error
     console.error("ERROR assigning schemes:", err);
@@ -1132,14 +1155,16 @@ exports.assignSchemes = async (req, res) => {
     connection.release(); // Release connection back to pool
   }
 };
-// 
+//
 exports.getPrivateValidSchemes = async (req, res) => {
   try {
     // Get production_center_id from URL parameters
     const { id: production_center_id } = req.params;
 
     if (!production_center_id) {
-      return res.status(400).json({ message: "Production Center ID is required" });
+      return res
+        .status(400)
+        .json({ message: "Production Center ID is required" });
     }
 
     const sql = `
@@ -1158,13 +1183,15 @@ exports.getPrivateValidSchemes = async (req, res) => {
     `;
 
     // We pass the production_center_id twice for both joins
-    const [schemes] = await db.execute(sql, [production_center_id, production_center_id]);
+    const [schemes] = await db.execute(sql, [
+      production_center_id,
+      production_center_id,
+    ]);
 
-    return res.json({ 
-      success: true, 
-      data: schemes 
+    return res.json({
+      success: true,
+      data: schemes,
     });
-
   } catch (err) {
     console.error("Error fetching private valid schemes:", err);
     res.status(500).json({ message: "Server Error", err });

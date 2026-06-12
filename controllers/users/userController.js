@@ -1,4 +1,4 @@
-const db = require("../../db"); // Make sure this path points to your db config
+const db = require("../../db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const NodeCache = require("node-cache");
@@ -692,15 +692,28 @@ exports.createFarmer = async (req, res) => {
     const {
       name,
       mobile_number,
-      district_id, // Updated: matches payload and DB
-      block_id, // Updated: matches payload and DB
-      village_id, // Updated: matches payload and DB
+      district_id,
+      block_id,
+      village_id,
       aadhar_no,
       land_panel_details,
       species_preferred,
       purpose,
       type,
     } = req.body;
+    console.log(
+      "former details",
+      name,
+      mobile_number,
+      district_id,
+      block_id,
+      village_id,
+      aadhar_no,
+      land_panel_details,
+      species_preferred,
+      purpose,
+      type,
+    );
 
     // 1. Determine Prefix
     let prefix = "";
@@ -1265,11 +1278,9 @@ exports.checkAadharForRegistration = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // ============================================
 // SEPARATE GEOCODING FUNCTION WITH MULTIPLE FALLBACKS
 // ============================================
-
 async function getCoordinatesFromAddress(address) {
   // Method 1: Nominatim (OpenStreetMap) - Best for Indian addresses
   try {
@@ -1354,12 +1365,159 @@ async function getCoordinatesFromAddress(address) {
 // 3. REGISTER NON-FARMER (UPDATED WITH LAT/LNG)
 // ==========================================
 
+// exports.registerNonFarmer = async (req, res) => {
+//   try {
+//     const {
+//       aadhar_no,
+//       address,
+//       district_id,
+//       farmer_name,
+//       latitude,
+//       longitude,
+//       mobile_number,
+//       purpose,
+//     } = req.body;
+
+//     // Validate required fields
+//     if (!aadhar_no || !farmer_name || !mobile_number || !district_id) {
+//       return res
+//         .status(400)
+//         .json({ error: "Name, Mobile, Aadhaar, and District are required" });
+//     }
+
+//     if (aadhar_no.length !== 12) {
+//       return res.status(400).json({ error: "Invalid Aadhaar number" });
+//     }
+
+//     // Check if Aadhaar already exists in farmer table
+//     const [existingFarmer] = await db.query(
+//       `SELECT id FROM farmer WHERE aadhaar = ?`,
+//       [aadhar_no],
+//     );
+//     if (existingFarmer.length > 0) {
+//       return res.status(400).json({
+//         error: "Aadhaar already exists in farmer database. Please use login.",
+//       });
+//     }
+
+//     // Check if phone number already exists in users_customuser
+//     const [existingUser] = await db.query(
+//       `SELECT id FROM users_customuser WHERE phone = ?`,
+//       [mobile_number],
+//     );
+//     if (existingUser.length > 0) {
+//       return res
+//         .status(400)
+//         .json({ error: "Mobile number already registered." });
+//     }
+
+//     // Generate non_farmer_id (NFAR + next ID)
+//     const [maxId] = await db.query(
+//       `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM users_farmeraathardetails`,
+//     );
+//     const newNonFarmerId = `NFAR${maxId[0].next_id}`;
+
+//     const dummyEmail = `nonfarmer_${mobile_number}@temp.com`;
+
+//     const [userResult] = await db.query(
+//       `INSERT INTO users_customuser
+//        (phone, email, username, is_active, role_id)
+//        VALUES (?, ?, ?, 1, ?)`,
+//       [mobile_number, dummyEmail, farmer_name, 4],
+//     );
+//     const newUserPk = userResult.insertId;
+
+//     if (address) {
+//       try {
+//         const geoRes = await axios.get("https://photon.komoot.io/api/", {
+//           params: { q: address, limit: 1 },
+//           headers: { "User-Agent": "YourAppName/1.0" }, // required by Photon
+//         });
+
+//         if (
+//           geoRes.data &&
+//           geoRes.data.features &&
+//           geoRes.data.features.length > 0
+//         ) {
+//           const coords = geoRes.data.features[0].geometry.coordinates;
+//           longitude = coords[0]; // Photon returns [lon, lat]
+//           latitude = coords[1];
+//         }
+//       } catch (geoErr) {
+//         console.error("Geocoding failed:", geoErr.message);
+//       }
+//     }
+
+//     // 2. Insert into users_farmeraathardetails table
+//     await db.query(
+//       `INSERT INTO users_farmeraathardetails
+//        (aadhar_no, non_farmer_id, farmer_name, purpose, mobile_number, district_id, address, latitude, longitude, type, user_id , created_at)
+//        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'non-farmer', ? , NOW())`,
+//       [
+//         aadhar_no,
+//         newNonFarmerId,
+//         farmer_name,
+//         purpose,
+//         mobile_number,
+//         district_id,
+//         address,
+//         latitude,
+//         longitude,
+//         newUserPk,
+//       ],
+//     );
+
+//     // Generate JWT tokens
+//     const JWT_SECRET =
+//       "django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1";
+//     const JWT_REFRESH_SECRET =
+//       "django-insecure-o+nog!1vl&o&qxyg0pz7g!x(u)ym6u8ae5yfint_jm2g-6efo1";
+
+//     const accessToken = jwt.sign(
+//       {
+//         id: newUserPk,
+//         role: "farmer",
+//         district_id: district_id || null,
+//         block_id: null,
+//       },
+//       JWT_SECRET,
+//       { expiresIn: "2h" },
+//     );
+
+//     const refreshToken = jwt.sign({ id: newUserPk }, JWT_REFRESH_SECRET, {
+//       expiresIn: "7d",
+//     });
+
+//     return res.status(201).json({
+//       status: "success",
+//       message: "Registration successful!",
+//       access: accessToken,
+//       refresh: refreshToken,
+//       user_id: newUserPk,
+//       role: "farmer",
+//       user_name: farmer_name,
+//       farmer_id: newNonFarmerId,
+//       production_center_id: null,
+//       production_center_status: null,
+//       department_id: null,
+//       district_id: district_id || null,
+//       block_id: null,
+//       latitude,
+//       longitude,
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
 exports.registerNonFarmer = async (req, res) => {
   try {
     const {
       aadhar_no,
       address,
       district_id,
+      block_id,
+      village_id,
       farmer_name,
       latitude,
       longitude,
@@ -1368,10 +1526,18 @@ exports.registerNonFarmer = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!aadhar_no || !farmer_name || !mobile_number || !district_id) {
-      return res
-        .status(400)
-        .json({ error: "Name, Mobile, Aadhaar, and District are required" });
+    if (
+      !aadhar_no ||
+      !farmer_name ||
+      !mobile_number ||
+      !district_id ||
+      !block_id ||
+      !village_id
+    ) {
+      return res.status(400).json({
+        error:
+          "Name, Mobile, Aadhaar, District, Block, and Village are required",
+      });
     }
 
     if (aadhar_no.length !== 12) {
@@ -1404,7 +1570,7 @@ exports.registerNonFarmer = async (req, res) => {
     const [maxId] = await db.query(
       `SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM users_farmeraathardetails`,
     );
-    const newNonFarmerId = `NFAR${maxId[0].next_id}`;
+    const newNonFarmerId = `NFAR${String(maxId[0].next_id).padStart(3, "0")}`;
 
     const dummyEmail = `nonfarmer_${mobile_number}@temp.com`;
 
@@ -1420,7 +1586,7 @@ exports.registerNonFarmer = async (req, res) => {
       try {
         const geoRes = await axios.get("https://photon.komoot.io/api/", {
           params: { q: address, limit: 1 },
-          headers: { "User-Agent": "YourAppName/1.0" }, // required by Photon
+          headers: { "User-Agent": "YourAppName/1.0" },
         });
 
         if (
@@ -1429,7 +1595,7 @@ exports.registerNonFarmer = async (req, res) => {
           geoRes.data.features.length > 0
         ) {
           const coords = geoRes.data.features[0].geometry.coordinates;
-          longitude = coords[0]; // Photon returns [lon, lat]
+          longitude = coords[0];
           latitude = coords[1];
         }
       } catch (geoErr) {
@@ -1437,11 +1603,11 @@ exports.registerNonFarmer = async (req, res) => {
       }
     }
 
-    // 2. Insert into users_farmeraathardetails table
+    // Insert into users_farmeraathardetails table with block_id and village_id
     await db.query(
       `INSERT INTO users_farmeraathardetails 
-       (aadhar_no, non_farmer_id, farmer_name, purpose, mobile_number, district_id, address, latitude, longitude, type, user_id , created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'non-farmer', ? , NOW())`,
+       (aadhar_no, non_farmer_id, farmer_name, purpose, mobile_number, district_id, block_id, village_id, address, latitude, longitude, type, user_id, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'non-farmer', ?, NOW())`,
       [
         aadhar_no,
         newNonFarmerId,
@@ -1449,6 +1615,8 @@ exports.registerNonFarmer = async (req, res) => {
         purpose,
         mobile_number,
         district_id,
+        block_id,
+        village_id,
         address,
         latitude,
         longitude,
@@ -1467,7 +1635,7 @@ exports.registerNonFarmer = async (req, res) => {
         id: newUserPk,
         role: "farmer",
         district_id: district_id || null,
-        block_id: null,
+        block_id: block_id || null,
       },
       JWT_SECRET,
       { expiresIn: "2h" },
@@ -1490,7 +1658,8 @@ exports.registerNonFarmer = async (req, res) => {
       production_center_status: null,
       department_id: null,
       district_id: district_id || null,
-      block_id: null,
+      block_id: block_id || null,
+      village_id: village_id || null,
       latitude,
       longitude,
     });
@@ -1499,7 +1668,6 @@ exports.registerNonFarmer = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // ===================== FARMER REQUEST =====================
 exports.farmerRequest = async (req, res) => {
   const connection = await db.getConnection();
@@ -1752,36 +1920,184 @@ exports.approveItem = async (req, res) => {
   }
 };
 
+// exports.getCenterOrders = async (req, res) => {
+//   try {
+//     const { production_center_id, user_id, status, limit, offset } = req.query;
+//     console.log("log", production_center_id, user_id, status, limit, offset);
+
+//     console.log("👉 Incoming Query Params:", req.query);
+
+//     // if (!production_center_id && !user_id) {
+//     //     return res.status(400).json({
+//     //         error: "Either production_center_id or user_id is required"
+//     //     });
+//     // }
+
+//     let whereConditions = [];
+//     let params = [];
+
+//     if (production_center_id) {
+//       whereConditions.push(`fr.production_center_id = ?`);
+//       params.push(production_center_id);
+//     }
+
+//     if (user_id) {
+//       whereConditions.push(`fr.created_by_id = ?`);
+//       params.push(user_id);
+//     }
+//     if (status) {
+//       // support comma-separated list or single status
+//       const statuses = status
+//         .split(",")
+//         .map((s) => s.trim())
+//         .filter(Boolean);
+//       if (statuses.length === 1) {
+//         whereConditions.push(`fr.status = ?`);
+//         params.push(statuses[0]);
+//       } else if (statuses.length > 1) {
+//         const placeholders = statuses.map(() => "?").join(",");
+//         whereConditions.push(`fr.status IN (${placeholders})`);
+//         params.push(...statuses);
+//       }
+//     }
+//     const whereClause = whereConditions.length
+//       ? `WHERE ${whereConditions.join(" AND ")}`
+//       : "";
+
+//     let limitValue = limit ? parseInt(limit) : undefined;
+//     let offsetValue = offset ? parseInt(offset) : undefined;
+
+//     if (isNaN(limitValue)) limitValue = undefined;
+//     if (isNaN(offsetValue)) offsetValue = undefined;
+
+//     const limitClause = limitValue ? `LIMIT ?` : "";
+//     const offsetClause = offsetValue ? `OFFSET ?` : "";
+
+//     // Use DESC for Newest first, or ASC for Oldest first
+//     const query = `
+//             SELECT
+//                 fr.id as request_id,
+//                 fr.orderid,
+//                 fr.production_center_id,
+//                 fr.status as order_status,
+//                 fr.created_at as order_date,
+//                 f.farmer_name as farmer_name,
+//                 f.type as farmer_type,
+//                 f.mobile_number as farmer_mobile,
+//                 f.farmer_id as farmer_code,
+//                 fri.id as item_id,
+//                 fri.stock_id,
+//                 fri.species_id,
+//                 fri.requested_quantity,
+//                 fri.approved_quantity,
+//                 fri.status as item_status,
+//                 fri.type,
+//                 fri.scheme_id,
+//                 t.name as species_name,
+//                 t.name_tamil as species_name_tamil
+//             FROM users_farmerrequest fr
+//             JOIN users_farmerrequestitem fri ON fr.id = fri.request_id
+//             LEFT JOIN users_farmeraathardetails f ON fr.farmer_id = f.user_id
+//             LEFT JOIN tbl_agroforest_trees t ON fri.species_id = t.id
+//             ${whereClause}
+//             ORDER BY fr.created_at DESC
+//             ${limitClause} ${offsetClause}
+//         `;
+
+//     const queryParams = [...params, limitValue, offsetValue].filter(
+//       (v) => v !== undefined,
+//     );
+//     const [rows] = await db.query(query, queryParams);
+
+//     // ✅ FIXED: Using Map to preserve the SQL Sort Order
+//     const ordersMap = new Map();
+
+//     rows.forEach((row) => {
+//       if (!ordersMap.has(row.request_id)) {
+//         ordersMap.set(row.request_id, {
+//           request_id: row.request_id,
+//           orderid: row.orderid,
+//           order_status: row.order_status,
+//           order_date: row.order_date,
+//           farmer_name: row.farmer_name,
+//           farmer_type: row.farmer_type,
+//           farmer_mobile: row.farmer_mobile,
+//           production_center_id: row.production_center_id,
+//           farmer_code: row.farmer_code,
+//           requested_items: [],
+//         });
+//       }
+
+//       if (row.item_id) {
+//         ordersMap.get(row.request_id).requested_items.push({
+//           item_id: row.item_id,
+//           stock_id: row.stock_id,
+//           species_id: row.species_id,
+//           species_name: row.species_name,
+//           species_name_tamil: row.species_name_tamil,
+//           requested_quantity: row.requested_quantity,
+//           approved_quantity: row.approved_quantity,
+//           item_status: row.item_status,
+//           type: row.type,
+//           scheme_id: row.scheme_id,
+//         });
+//       }
+//     });
+
+//     // Convert Map back to array (stays in order)
+//     const results = Array.from(ordersMap.values());
+
+//     res.json({
+//       count: results.length,
+//       results,
+//     });
+//   } catch (err) {
+//     console.error("❌ Fetch Orders Error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
 exports.getCenterOrders = async (req, res) => {
   try {
-    const { production_center_id, user_id, status, limit, offset } = req.query;
+    const {
+      production_center_id,
+      user_id,
+      status,
+      district_id,
+      limit,
+      offset,
+    } = req.query;
 
     console.log("👉 Incoming Query Params:", req.query);
-
-    // if (!production_center_id && !user_id) {
-    //     return res.status(400).json({
-    //         error: "Either production_center_id or user_id is required"
-    //     });
-    // }
 
     let whereConditions = [];
     let params = [];
 
+    // Production Center Filter
     if (production_center_id) {
       whereConditions.push(`fr.production_center_id = ?`);
       params.push(production_center_id);
     }
 
+    // Created By User Filter
     if (user_id) {
       whereConditions.push(`fr.created_by_id = ?`);
       params.push(user_id);
     }
+
+    // Farmer District Filter
+    if (district_id) {
+      whereConditions.push(`f.district_id = ?`);
+      params.push(district_id);
+    }
+
+    // Status Filter
     if (status) {
-      // support comma-separated list or single status
       const statuses = status
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+
       if (statuses.length === 1) {
         whereConditions.push(`fr.status = ?`);
         params.push(statuses[0]);
@@ -1791,6 +2107,7 @@ exports.getCenterOrders = async (req, res) => {
         params.push(...statuses);
       }
     }
+
     const whereClause = whereConditions.length
       ? `WHERE ${whereConditions.join(" AND ")}`
       : "";
@@ -1804,43 +2121,65 @@ exports.getCenterOrders = async (req, res) => {
     const limitClause = limitValue ? `LIMIT ?` : "";
     const offsetClause = offsetValue ? `OFFSET ?` : "";
 
-    // Use DESC for Newest first, or ASC for Oldest first
     const query = `
-            SELECT 
-                fr.id as request_id,
-                fr.orderid,
-                fr.production_center_id,
-                fr.status as order_status,
-                fr.created_at as order_date,
-                f.farmer_name as farmer_name,
-                f.type as farmer_type,
-                f.mobile_number as farmer_mobile,
-                f.farmer_id as farmer_code,
-                fri.id as item_id,
-                fri.stock_id,
-                fri.species_id,
-                fri.requested_quantity,
-                fri.approved_quantity,
-                fri.status as item_status,
-                fri.type,
-                fri.scheme_id,
-                t.name as species_name,
-                t.name_tamil as species_name_tamil
-            FROM users_farmerrequest fr
-            JOIN users_farmerrequestitem fri ON fr.id = fri.request_id
-            LEFT JOIN users_farmeraathardetails f ON fr.farmer_id = f.user_id
-            LEFT JOIN tbl_agroforest_trees t ON fri.species_id = t.id
-            ${whereClause}
-            ORDER BY fr.created_at DESC
-            ${limitClause} ${offsetClause}
-        `;
+      SELECT 
+        fr.id AS request_id,
+        fr.orderid,
+        fr.farmer_id,
+        fr.production_center_id,
+        fr.status AS order_status,
+        fr.created_at AS order_date,
 
-    const queryParams = [...params, limitValue, offsetValue].filter(
-      (v) => v !== undefined,
-    );
+        f.user_id,
+        f.farmer_name,
+        f.type AS farmer_type,
+        f.mobile_number AS farmer_mobile,
+        f.farmer_id AS farmer_code,
+        f.district_id,
+
+        fri.id AS item_id,
+        fri.stock_id,
+        fri.species_id,
+        fri.requested_quantity,
+        fri.approved_quantity,
+        fri.status AS item_status,
+        fri.type,
+        fri.scheme_id,
+
+        t.name AS species_name,
+        t.name_tamil AS species_name_tamil
+
+      FROM users_farmerrequest fr
+
+      JOIN users_farmerrequestitem fri
+        ON fr.id = fri.request_id
+
+      LEFT JOIN users_farmeraathardetails f
+        ON fr.farmer_id = f.user_id
+
+      LEFT JOIN tbl_agroforest_trees t
+        ON fri.species_id = t.id
+
+      ${whereClause}
+
+      ORDER BY fr.created_at DESC
+
+      ${limitClause}
+      ${offsetClause}
+    `;
+
+    const queryParams = [...params];
+
+    if (limitValue !== undefined) {
+      queryParams.push(limitValue);
+    }
+
+    if (offsetValue !== undefined) {
+      queryParams.push(offsetValue);
+    }
+
     const [rows] = await db.query(query, queryParams);
 
-    // ✅ FIXED: Using Map to preserve the SQL Sort Order
     const ordersMap = new Map();
 
     rows.forEach((row) => {
@@ -1848,13 +2187,20 @@ exports.getCenterOrders = async (req, res) => {
         ordersMap.set(row.request_id, {
           request_id: row.request_id,
           orderid: row.orderid,
+          farmer_id: row.farmer_id,
           order_status: row.order_status,
           order_date: row.order_date,
-          farmer_name: row.farmer_name,
-          farmer_type: row.farmer_type,
-          farmer_mobile: row.farmer_mobile,
           production_center_id: row.production_center_id,
-          farmer_code: row.farmer_code,
+
+          farmer_details: {
+            user_id: row.user_id,
+            farmer_name: row.farmer_name,
+            farmer_type: row.farmer_type,
+            farmer_mobile: row.farmer_mobile,
+            farmer_code: row.farmer_code,
+            district_id: row.district_id,
+          },
+
           requested_items: [],
         });
       }
@@ -1875,16 +2221,18 @@ exports.getCenterOrders = async (req, res) => {
       }
     });
 
-    // Convert Map back to array (stays in order)
     const results = Array.from(ordersMap.values());
 
-    res.json({
+    res.status(200).json({
       count: results.length,
       results,
     });
   } catch (err) {
     console.error("❌ Fetch Orders Error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 };
 
