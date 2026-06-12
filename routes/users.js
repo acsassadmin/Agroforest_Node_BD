@@ -23,7 +23,7 @@ router.post("/farmer-aadhar/", authenticateToken, userController.createFarmer);
 router.post("/farmer-aadhar-card/", userController.getFarmerAadhar);
 router.post("/get-aadhar/", userController.getAadhar);
 
-// Farmer Registration Flow
+// Farmer Registration Flow update
 router.post("/farmer/check-aadhar/", userController.checkAadharForRegistration);
 router.post("/farmer/register-non-farmer/", userController.registerNonFarmer);
 router.get(

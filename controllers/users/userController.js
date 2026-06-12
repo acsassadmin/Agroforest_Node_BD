@@ -16,7 +16,6 @@ const { parsePhoneNumberFromString } = require("libphonenumber-js");
 const cache = new NodeCache({ stdTTL: 180 });
 const axios = require("axios");
 const { json } = require("stream/consumers");
-const { log } = require("console");
 
 async function geocodeAddress(address) {
   try {

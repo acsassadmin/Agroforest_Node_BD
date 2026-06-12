@@ -838,7 +838,7 @@ exports.getFarmerOrders = async (req, res) => {
         schemeMap[i.request_id] = { id: i.scheme_id, name: i.scheme_name };
     });
 
-    // 2. Get Inspections + Uploads
+    // 2. Get Inspections + Uploads update
     let inspectionMap = {};
     if (requestIds.length) {
       const [inspections] = await db.execute(

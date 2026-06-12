@@ -5,7 +5,7 @@ const upload = require("../Multer/upload");
 const { getScheme } = require("../controllers/Production/stockController");
 
 // ============================================
-// OFFICER ROUTES
+// OFFICER ROUTES update
 // ============================================
 router.get("/officer", officerController.getOfficers);
 router.get("/officer/:id", officerController.getOfficerById);

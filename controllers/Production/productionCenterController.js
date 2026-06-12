@@ -436,7 +436,7 @@ exports.getProduction = async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 };
-// create production center
+// create production center update
 exports.createProductionCenter = async (req, res) => {
   const connection = await db.getConnection();
 
