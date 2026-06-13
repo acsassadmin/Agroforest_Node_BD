@@ -2986,6 +2986,168 @@ exports.getProductionCentersList = async (req, res) => {
   }
 };
 
+// exports.getTargetDetails = async (req, res) => {
+//   try {
+//     const user = req.user || {};
+//     const role = req.query.role || user.role;
+//     const target_level = req.query.target_level;
+
+//     const department_id = req.query.department_id || user.department_id;
+//     const district_id = req.query.district_id || user.district_id;
+//     const block_id = req.query.block_id || user.block_id;
+
+//     if (!target_level) {
+//       return res.status(400).json({
+//         success: false,
+//         error: "Query param 'target_level' is required.",
+//       });
+//     }
+
+//     if (role === "department_admin" && !department_id)
+//       return res.status(400).json({
+//         success: false,
+//         error: "Department ID is required for Department Admin.",
+//       });
+
+//     if (role === "district_admin" && !district_id)
+//       return res.status(400).json({
+//         success: false,
+//         error: "District ID is required for District Admin.",
+//       });
+
+//     if (role === "block_admin" && !block_id)
+//       return res.status(400).json({
+//         success: false,
+//         error: "Block ID is required for Block Admin.",
+//       });
+
+//     const cacheKey = `targetDetails:${target_level}:${role}:${department_id || ""}:${district_id || ""}:${block_id || ""}`;
+//     // ✅ 1. Check cache
+//     try {
+//       const cachedData = await redisClient.get(cacheKey);
+//       if (cachedData) {
+//         return res.status(200).json(JSON.parse(cachedData));
+//       }
+//     } catch (err) {
+//       console.error("Redis GET error:", err);
+//     }
+
+//     let query = "";
+//     let queryParams = [];
+//     let whereClauses = [];
+
+//     // --- YOUR EXISTING QUERY LOGIC (unchanged) ---
+//     if (target_level === "department") {
+//       query = `
+//         SELECT td.id, td.target_tag, td.target_quantity, td.financial_year, td.created_at,
+//                d.name AS department_name, u.username AS created_by_name
+//         FROM target_department td
+//         LEFT JOIN department d ON td.department_id = d.id
+//         LEFT JOIN users_customuser u ON td.created_by = u.id
+//       `;
+//       if (role === "department_admin") {
+//         whereClauses.push("td.department_id = ?");
+//         queryParams.push(department_id);
+//       }
+//     } else if (target_level === "district") {
+//       query = `
+//         SELECT tdis.id, tdis.target_quantity, tdis.start_date, tdis.end_date, tdis.status, tdis.created_at,
+//                dis.District_Name AS district_name,
+//                d.name AS department_name,
+//                u.username AS created_by_name
+//         FROM target_district tdis
+//         LEFT JOIN master_district dis ON tdis.district_id = dis.id
+//         LEFT JOIN department d ON tdis.target_department_id = d.id
+//         LEFT JOIN users_customuser u ON tdis.created_by = u.id
+//       `;
+//       if (role === "department_admin") {
+//         whereClauses.push("tdis.target_department_id = ?");
+//         queryParams.push(department_id);
+//       } else if (role === "district_admin") {
+//         whereClauses.push("tdis.district_id = ?");
+//         queryParams.push(district_id);
+//       }
+//     } else if (target_level === "block") {
+//       query = `
+//         SELECT tb.id, tb.target_quantity, tb.start_date, tb.end_date, tb.created_at,
+//                b.Block_Name AS block_name,
+//                dis.District_Name AS district_name,
+//                d.name AS department_name,
+//                u.username AS created_by_name
+//         FROM target_block tb
+//         LEFT JOIN master_block b ON tb.block_id = b.id
+//         LEFT JOIN master_district dis ON tb.district_id = dis.id
+//         LEFT JOIN department d ON tb.target_department_id = d.id
+//         LEFT JOIN users_customuser u ON tb.created_by = u.id
+//       `;
+//       if (role === "department_admin") {
+//         whereClauses.push("tb.target_department_id = ?");
+//         queryParams.push(department_id);
+//       } else if (role === "district_admin") {
+//         whereClauses.push("tb.district_id = ?");
+//         queryParams.push(district_id);
+//       } else if (role === "block_admin") {
+//         whereClauses.push("tb.block_id = ?");
+//         queryParams.push(block_id);
+//       }
+//     } else if (target_level === "productioncenter") {
+//       query = `
+//         SELECT tpc.id, tpc.target_quantity, tpc.start_date, tpc.end_date, tpc.created_at,
+//                pc.name_of_production_centre AS production_center_name,
+//                b.Block_Name AS block_name,
+//                dis.District_Name AS district_name,
+//                d.name AS department_name,
+//                u.username AS created_by_name
+//         FROM target_productioncenter tpc
+//         LEFT JOIN productioncenter_productioncenter pc ON tpc.productioncenter_id = pc.id
+//         LEFT JOIN master_block b ON tpc.block_id = b.id
+//         LEFT JOIN master_district dis ON tpc.district_id = dis.id
+//         LEFT JOIN department d ON tpc.target_department_id = d.id
+//         LEFT JOIN users_customuser u ON tpc.created_by = u.id
+//       `;
+//       if (role === "department_admin") {
+//         whereClauses.push("tpc.target_department_id = ?");
+//         queryParams.push(department_id);
+//       } else if (role === "district_admin") {
+//         whereClauses.push("tpc.district_id = ?");
+//         queryParams.push(district_id);
+//       } else if (role === "block_admin") {
+//         whereClauses.push("tpc.block_id = ?");
+//         queryParams.push(block_id);
+//       }
+//     } else {
+//       return res
+//         .status(400)
+//         .json({ success: false, error: "Invalid target_level provided." });
+//     }
+
+//     if (whereClauses.length > 0) {
+//       query += " WHERE " + whereClauses.join(" AND ");
+//     }
+
+//     const [rows] = await db.query(query, queryParams);
+
+//     const response = {
+//       success: true,
+//       count: rows.length,
+//       data: rows,
+//     };
+
+//     // ✅ 2. Store in Redis (non-blocking)
+//     redisClient
+//       .set(cacheKey, JSON.stringify(response), { EX: 60 })
+//       .catch((err) => console.error("Redis SET error:", err));
+
+//     // ✅ 3. Send response
+//     res.status(200).json(response);
+//   } catch (err) {
+//     console.error("❌ Target Details Error:", err);
+//     res
+//       .status(500)
+//       .json({ success: false, error: "Server Error", details: err.message });
+//   }
+// };
+
 exports.getTargetDetails = async (req, res) => {
   try {
     const user = req.user || {};
@@ -3022,24 +3184,27 @@ exports.getTargetDetails = async (req, res) => {
       });
 
     const cacheKey = `targetDetails:${target_level}:${role}:${department_id || ""}:${district_id || ""}:${block_id || ""}`;
-    // ✅ 1. Check cache
-    try {
-      const cachedData = await redisClient.get(cacheKey);
-      if (cachedData) {
-        return res.status(200).json(JSON.parse(cachedData));
-      }
-    } catch (err) {
-      console.error("Redis GET error:", err);
-    }
+
+    //  1. Check cache
+    // try {
+    //   const cachedData = await redisClient.get(cacheKey);
+    //   if (cachedData) {
+    //     return res.status(200).json(JSON.parse(cachedData));
+    //   }
+    // } catch (err) {
+    //   console.error("Redis GET error:", err);
+    // }
 
     let query = "";
     let queryParams = [];
     let whereClauses = [];
 
-    // --- YOUR EXISTING QUERY LOGIC (unchanged) ---
+    // --- UPDATED QUERY LOGIC ---
+
     if (target_level === "department") {
+      //  UPDATED: Added 'td.scheme_type' to the SELECT statement
       query = `
-        SELECT td.id, td.target_tag, td.target_quantity, td.financial_year, td.created_at,
+        SELECT td.id, td.target_tag, td.target_quantity, td.financial_year, td.created_at, td.scheme_type,
                d.name AS department_name, u.username AS created_by_name
         FROM target_department td
         LEFT JOIN department d ON td.department_id = d.id
@@ -3050,6 +3215,8 @@ exports.getTargetDetails = async (req, res) => {
         queryParams.push(department_id);
       }
     } else if (target_level === "district") {
+      // Note: target_district table usually doesn't have scheme_type directly,
+      // so we are NOT adding it here to avoid SQL errors unless that column exists in that table too.
       query = `
         SELECT tdis.id, tdis.target_quantity, tdis.start_date, tdis.end_date, tdis.status, tdis.created_at,
                dis.District_Name AS district_name,
@@ -3133,15 +3300,15 @@ exports.getTargetDetails = async (req, res) => {
       data: rows,
     };
 
-    // ✅ 2. Store in Redis (non-blocking)
+    //  2. Store in Redis (non-blocking)
     redisClient
       .set(cacheKey, JSON.stringify(response), { EX: 60 })
       .catch((err) => console.error("Redis SET error:", err));
 
-    // ✅ 3. Send response
+    //  3. Send response
     res.status(200).json(response);
   } catch (err) {
-    console.error("❌ Target Details Error:", err);
+    console.error(" Target Details Error:", err);
     res
       .status(500)
       .json({ success: false, error: "Server Error", details: err.message });

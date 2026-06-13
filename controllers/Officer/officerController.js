@@ -764,7 +764,7 @@ exports.getFarmerOrders = async (req, res) => {
     let params = [];
     console.log("user", user);
 
-    // ✅ LOGIC: Block Admin filters by block_id
+    //  LOGIC: Block Admin filters by block_id
     if (role === "district_admin") {
       baseSql += ` AND pc.district_id = ?`;
       params.push(user.district_id);
@@ -852,7 +852,7 @@ exports.getFarmerOrders = async (req, res) => {
       let uploadMap = {};
 
       if (inspectionIds.length) {
-        // ✅ LOGIC: Join 'inspected_by' with user table to get "Inspected By" name
+        //  LOGIC: Join 'inspected_by' with user table to get "Inspected By" name
         const [uploads] = await db.execute(
           `
           SELECT iu.id, iu.inspection_id, iu.image, iu.inspection_address,
@@ -886,7 +886,7 @@ exports.getFarmerOrders = async (req, res) => {
             longitude: u.longitude,
             survey_count: u.survey_count,
             inspected_by: u.inspected_by,
-            inspected_by_name: inspectorName, // ✅ POPULATED HERE
+            inspected_by_name: inspectorName, //  POPULATED HERE
             verification_status: "submitted",
             uploaded_at: u.created_at,
           });
