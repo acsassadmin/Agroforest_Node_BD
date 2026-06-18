@@ -45,7 +45,7 @@ const dynamicControl = require("./routes/dynamiccontrol");
 const masterRoutes = require("./routes/master");
 const paymentRoutes = require("./routes/payment");
 const former = require("./routes/former");
-
+// --- update check
 app.use("/users", userRoutes);
 app.use("/center", centerRoutes);
 app.use("/officers", officerRoutes);
